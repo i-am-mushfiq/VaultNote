@@ -1,0 +1,16 @@
+node_modules/
+dist/
+.env
+.env.*
+
+# Tauri
+src-tauri/target/
+src-tauri/gen/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Claude Code session data
+.claude/

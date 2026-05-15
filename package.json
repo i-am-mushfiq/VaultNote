@@ -1,0 +1,51 @@
+{
+  "name": "vaultnote",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@codemirror/autocomplete": "^6.20.2",
+    "@codemirror/commands": "^6",
+    "@codemirror/lang-markdown": "^6",
+    "@codemirror/language": "^6",
+    "@codemirror/language-data": "^6",
+    "@codemirror/search": "^6.7.0",
+    "@codemirror/state": "^6",
+    "@codemirror/theme-one-dark": "^6",
+    "@codemirror/view": "^6",
+    "@lezer/highlight": "^1",
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-dialog": "^2",
+    "date-fns": "^3",
+    "fuse.js": "^7",
+    "highlight.js": "^11",
+    "lucide-react": "^0.400.0",
+    "react": "^18",
+    "react-dom": "^18",
+    "rehype-highlight": "^7",
+    "rehype-sanitize": "^6",
+    "rehype-stringify": "^10",
+    "remark-gfm": "^4",
+    "remark-parse": "^11",
+    "remark-rehype": "^11",
+    "unified": "^11",
+    "zustand": "^4"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "@types/react": "^18",
+    "@types/react-dom": "^18",
+    "@vitejs/plugin-react": "^4",
+    "autoprefixer": "^10",
+    "postcss": "^8",
+    "tailwindcss": "^3",
+    "typescript": "^5",
+    "vite": "^5"
+  }
+}
