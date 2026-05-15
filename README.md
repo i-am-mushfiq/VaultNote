@@ -1,340 +1,515 @@
 # VaultNote
 
-A local-first, privacy-focused Markdown note-taking app for Windows. All notes live on your own disk — no cloud sync, no accounts, no telemetry.
-
-Built with **Tauri v2 + React 18 + CodeMirror 6**.
+A local-first, AI-powered Markdown knowledge base — built with Tauri, React, and on-device semantic intelligence. All your notes stay on your machine. No cloud, no subscriptions, no tracking.
 
 ---
 
-## Features
+## Table of Contents
 
-### Core editing
-- **Vault-based organisation** — open any folder on your machine as a vault
-- **Live Markdown preview** — side-by-side or below, draggable split divider
-- **Multi-tab editing** — open several files at once with dirty-state indicators
-- **Bidirectional scroll sync** — scrolling either pane moves the other to match; click preview to jump the editor to that line
-- **Full-text & fuzzy search** — Fuse.js index built on vault load (`Ctrl+F`)
-- **Command palette** — `Ctrl+P` for quick file navigation
-- **Daily notes** — one-click today's note (`Ctrl+D`)
-- **Auto-save** — configurable idle-time auto-save
-- **File watcher** — external changes detected via Rust `notify` crate and reflected live
-- **Dark / Light / System theme** — toggle in Settings
-- **Atomic writes** — crash-safe saves via tmp→rename on disk
+1. [Philosophy](#philosophy)
+2. [Feature Overview](#feature-overview)
+3. [Installation & First Launch](#installation--first-launch)
+4. [Vault Management](#vault-management)
+5. [The Editor](#the-editor)
+6. [Markdown & Wiki-Links](#markdown--wiki-links)
+7. [Tabs](#tabs)
+8. [Full-Text Search](#full-text-search)
+9. [Semantic (AI) Search](#semantic-ai-search)
+10. [Knowledge Graph](#knowledge-graph)
+11. [Related Notes Panel](#related-notes-panel)
+12. [Entity Panel](#entity-panel)
+13. [Quick Capture](#quick-capture)
+14. [Flashcards](#flashcards)
+15. [Canvas](#canvas)
+16. [Text Highlights](#text-highlights)
+17. [Daily Notes & Templates](#daily-notes--templates)
+18. [Vault Intelligence Lock](#vault-intelligence-lock)
+19. [Directory Locks](#directory-locks)
+20. [Settings](#settings)
+21. [Keyboard Shortcuts](#keyboard-shortcuts)
+22. [Internal Files Written to Your Vault](#internal-files-written-to-your-vault)
 
-### Highlighting & annotations
-- **Text highlighting** — select any text in the preview, pick a colour from the floating toolbar
-- **Persistent highlights** — stored in a sidecar `.filename.md.highlights.json` file, never touching the original Markdown
-- **Double-click to remove** a highlight
+---
 
-### Canvas
-- **Infinite canvas** — create `.canvas` files for free-form note arrangement
-- **Drag, resize, pan, zoom** cards; each card holds Markdown content
+## Philosophy
 
-### Intelligence layer *(all 100% local — nothing leaves your machine)*
+VaultNote is built around one idea: **your knowledge should live on your machine, in plain Markdown files, and be as smart as possible without ever leaving your device.**
 
-| Feature | How to access |
+- Every note is a `.md` file you can open in any editor.
+- AI embeddings are computed locally (no API key, no internet after first model download).
+- Encryption is done in the browser with AES-GCM; passwords never touch disk.
+- The app is a thin Tauri shell — your vault is just a folder.
+
+---
+
+## Feature Overview
+
+| Category | Features |
 |---|---|
-| **Semantic search** | `Ctrl+F` → "Semantic" tab after model loads |
-| **Similar notes** | ✨ Sparkles button in the status bar |
-| **`[[WikiLink]]` navigation** | Click any `[[Note Name]]` link in the preview |
-| **Knowledge graph** | 🔗 Network button in status bar *or* sidebar |
-| **Backlinks panel** | Part of the Related Notes panel (✨) |
-| **Entity / auto-tag panel** | 🏷 Tag button in the status bar |
-| **Flashcard review** | 🧠 Brain button in the status bar |
-| **Quick Capture** | `Ctrl+Shift+Space` global hotkey (anywhere on the desktop) |
-| **Vault Intelligence Lock** | 🛡 Shield button in the sidebar header |
-
-### Privacy & security
-- **Per-directory password protection** — lock individual folders; unlock lasts for the session only
-- **Vault Intelligence Lock** — optionally encrypt the entire AI embeddings index (AES-GCM, PBKDF2 × 200 000 iterations) with a separate password; unencrypted Markdown files are never touched
+| **Editor** | CodeMirror 6, split editor/preview, live markdown render, scroll sync, click-to-edit |
+| **Linking** | `[[Wiki-Links]]`, backlinks panel, graph view |
+| **AI Search** | On-device semantic search (all-MiniLM-L6-v2), no API key required |
+| **Knowledge Graph** | Force-directed graph, wiki + semantic edges, color-coded similarity, threshold slider |
+| **Capture** | Global hotkey (`Ctrl+Shift+Space`), auto-titles from headings, appends to Inbox |
+| **Flashcards** | SM-2 spaced repetition, parsed from `Q:`/`A:` blocks in any note |
+| **Canvas** | Infinite freeform canvas, markdown cards, color-coded, drag/resize |
+| **Highlights** | In-preview text highlights, 5 colors, persisted as sidecar files |
+| **Security** | Per-directory password locks, Vault Intelligence Lock (encrypts AI index) |
+| **Portability** | Plain `.md` files — works with Obsidian, Typora, VS Code, etc. |
 
 ---
 
-## Screenshots
+## Installation & First Launch
 
-<img width="3840" height="2160" alt="image" src="https://github.com/user-attachments/assets/8fdef4fc-3f05-4c88-9b2d-2d03639ac4cd" />
-<img width="3840" height="2160" alt="image" src="https://github.com/user-attachments/assets/0f6ce125-0c4a-4ed4-b7e4-bc8e4404d933" />
-<img width="3840" height="2160" alt="image" src="https://github.com/user-attachments/assets/ce8b341f-2770-4eb8-93e2-ba0d3f98649a" />
+### Requirements
 
----
+- Windows 10/11 with WebView2 (pre-installed on Win 11; auto-downloaded on Win 10)
+- ~50 MB disk for the app + ~25 MB for the AI model (downloaded once on first use)
 
-## Tech Stack
-
-| Layer | Technology |
-|---|---|
-| Desktop shell | Tauri v2 (WebView2 on Windows) |
-| Frontend | React 18, TypeScript 5, Vite 5 |
-| Editor | CodeMirror 6 |
-| Markdown | unified / remark / rehype pipeline |
-| State | Zustand v4 with `persist` middleware |
-| Search | Fuse.js v7 (text) + cosine similarity (semantic) |
-| Embeddings | Transformers.js — `all-MiniLM-L6-v2` (22 MB ONNX, runs locally in WebView2) |
-| Graph | d3-force v7 |
-| Styling | Tailwind CSS v3 + CSS custom properties |
-| Icons | Lucide React |
-| Crypto | Web Crypto API (PBKDF2 / AES-GCM) |
-| File watching | Rust `notify` + `notify-debouncer-mini` |
-| Global shortcut | `tauri-plugin-global-shortcut` |
-
----
-
-## Architecture
-
-```
-MarkDown_NoteTaker/
-├── src/
-│   ├── components/
-│   │   ├── Canvas/             # Infinite canvas for .canvas files
-│   │   ├── CommandPalette/     # Ctrl+P quick-open palette
-│   │   ├── Editor/
-│   │   │   ├── index.tsx       # Pane orchestrator + intelligence panel buttons
-│   │   │   ├── CodeMirrorEditor.tsx
-│   │   │   ├── EditorTabs.tsx
-│   │   │   ├── MarkdownPreview.tsx  # Highlights, wiki-links, YouTube cards, scroll sync
-│   │   │   └── EmptyEditor.tsx
-│   │   ├── EntityPanel/        # Auto-extracted entity chips (hashtags, tech, dates…)
-│   │   ├── FlashcardMode/      # Full-screen SM-2 flashcard review
-│   │   ├── GraphView/          # d3-force knowledge graph overlay
-│   │   ├── QuickCapture/       # Floating capture window (global hotkey)
-│   │   ├── RelatedNotes/       # Semantic similar + backlinks panel
-│   │   ├── Search/             # Text search modal
-│   │   ├── Settings/
-│   │   ├── Sidebar/            # File tree + graph/lock triggers
-│   │   ├── VaultLock/          # Intelligence lock modal (set up / unlock)
-│   │   ├── LockModal.tsx       # Per-directory password modal
-│   │   └── VaultPicker.tsx
-│   ├── hooks/
-│   │   ├── useAutoSave.ts
-│   │   ├── useFileWatcher.ts
-│   │   └── useKeyboardShortcuts.ts
-│   ├── lib/
-│   │   ├── directoryLock.ts    # Per-folder PBKDF2 lock helpers
-│   │   ├── embeddings.ts       # Transformers.js singleton (load, embed, topK)
-│   │   ├── entities.ts         # Regex entity extraction (200+ tech terms)
-│   │   ├── fs.ts               # Typed invoke() wrappers for all FS ops
-│   │   ├── markdown.ts         # unified pipeline: WikiLinks + YouTube markers
-│   │   ├── pathUtils.ts
-│   │   ├── search.ts           # Fuse.js index
-│   │   ├── sm2.ts              # SM-2 algorithm + Q:/A: flashcard parser
-│   │   ├── vaultCrypto.ts      # AES-GCM encryption for AI metadata
-│   │   └── wikilinks.ts        # remark plugin + wiki-link helpers
-│   ├── stores/
-│   │   ├── embeddingStore.ts   # Vector index: load/save/search/related
-│   │   ├── flashcardStore.ts   # SM-2 review queue (persisted)
-│   │   ├── graphStore.ts       # Wiki-link graph: edges, backlinks, name index
-│   │   ├── highlightStore.ts   # Highlight sidecar persistence
-│   │   ├── lockStore.ts        # Per-directory session unlock state
-│   │   ├── vaultPasswordStore.ts # Intelligence lock state (in-memory password)
-│   │   ├── editorStore.ts
-│   │   ├── fileStore.ts
-│   │   ├── searchStore.ts
-│   │   ├── settingsStore.ts
-│   │   ├── tabStore.ts
-│   │   ├── uiStore.ts
-│   │   └── vaultStore.ts
-│   └── types/index.ts
-│
-└── src-tauri/
-    ├── src/
-    │   ├── main.rs
-    │   └── lib.rs              # FS commands + file watcher + global-shortcut setup
-    ├── Cargo.toml
-    ├── tauri.conf.json         # Main window + capture window config
-    └── capabilities/
-        └── default.json        # Core + dialog + global-shortcut permissions
-```
-
-### Key design decisions
-
-**Custom Rust FS commands**
-Tauri's built-in FS plugin requires declaring every allowed path in capabilities JSON, which doesn't work for a vault-picker that can open *any* folder. All file operations are implemented as `#[tauri::command]` functions and called via `invoke()`.
-
-**Atomic writes**
-`write_text_file` writes to `<path>.tmp` then renames over the target, so a crash mid-write never corrupts the original.
-
-**Local-only embeddings**
-`Transformers.js` runs the `all-MiniLM-L6-v2` ONNX model entirely inside WebView2. The model is downloaded once (~22 MB) and cached by the browser's Cache API — it persists across restarts. Zero network calls after first load.
-
-**Vault Intelligence Lock**
-Embeddings are stored in `.vaultnote-embeddings.json` at the vault root. Without a lock, this file is plaintext JSON. When locked, the entire object is AES-GCM encrypted with a PBKDF2-derived key (200 000 iterations, SHA-256, random salt). The password is kept in memory only and discarded when the app closes. Markdown files are never encrypted.
-
-**Per-directory locking**
-A `.vaultnote-lock.json` inside the folder holds the PBKDF2 key hash — never a plaintext password. Verification re-derives and compares hashes. A successful unlock is remembered in-memory for the session.
-
-**WikiLinks**
-A custom remark plugin intercepts `[[Note Name]]` and `[[Note Name|Display]]` syntax before the rehype pass. Each link becomes an `<a data-wiki-link="Note Name">` element. A click handler in `MarkdownPreview` resolves the name via `graphStore.nameToPath` and opens the target file.
-
-**YouTube cards**
-The rehype pipeline detects paragraphs containing a single standalone YouTube URL and marks them as `<div class="yt-card-placeholder" data-yt-id="…">`. After render, a `useEffect` fetches thumbnail + title from noembed.com and replaces the placeholder with a card.
-
-**Quick Capture window**
-A second Tauri window (`label: "capture"`) is configured as borderless, always-on-top, and hidden at startup. The global shortcut `Ctrl+Shift+Space` toggles its visibility. The window loads the same SPA at `/?capture=1`; `main.tsx` detects this and renders `<QuickCaptureWindow>` instead of `<App>`.
-
----
-
-## Prerequisites
-
-| Tool | Version |
-|---|---|
-| Node.js | 18 or later |
-| Rust + Cargo | stable (1.77+) |
-| Tauri CLI | v2 (`npm i -g @tauri-apps/cli`) |
-| WebView2 runtime | Pre-installed on Windows 10 / 11 |
-
----
-
-## Getting Started
+### From source
 
 ```bash
-# 1. Clone the repo
-git clone https://github.com/<your-username>/vaultnote.git
-cd vaultnote
-
-# 2. Install JS dependencies
+# Prerequisites: Node 18+, Rust 1.77+, Tauri CLI v2
+git clone <repo>
+cd MarkDown_NoteTaker
 npm install
-
-# 3. Start development build (hot-reload)
-npm run tauri dev
-
-# 4. Production build  →  src-tauri/target/release/
-npm run tauri build
+npm run tauri dev        # development build
+npm run tauri build      # production installer
 ```
 
-The first Rust compile takes a few minutes. Subsequent builds are incremental.
+### First launch
+
+1. The vault picker screen appears.
+2. Click **Open Vault** to point VaultNote at any existing folder of Markdown files.
+3. Or click **New Vault** — enter a name, pick a location. VaultNote creates starter folders (`Journal/`, `Notes/`, `Inbox/`) and a `Welcome.md`.
+4. Recent vaults appear on the picker for one-click reopening. Remove any with the ✕ button.
 
 ---
 
-## Usage
+## Vault Management
 
-### Opening a vault
+A *vault* is just a directory on disk. VaultNote adds a few hidden metadata files (prefixed with `.vaultnote-`); everything else is standard Markdown.
 
-On first launch click **Open Folder** and pick any directory. VaultNote treats that folder (and all subfolders) as your vault. The path is remembered across sessions.
+### Opening, switching, closing
 
-### Editing
+- **Open Vault**: sidebar header → folder icon, or the vault picker screen.
+- **Close Vault**: sidebar footer → ✕ button. Returns to the picker.
+- **Recent Vaults**: shown on the picker; up to 10 remembered.
 
-- Click a `.md` file in the sidebar to open it.
-- Drag the divider between editor and preview to resize; toggle preview on/off with the **Preview** button in the status bar.
-- Switch the preview to bottom layout with the **⊞** icon next to Preview.
+### File tree
 
-### Keyboard shortcuts
+The sidebar shows your vault's folder structure. Directories expand/collapse on click. Hidden files (names starting with `.`) are filtered out by the Rust layer.
 
-| Shortcut | Action |
+### Creating files and folders
+
+- **New File** (`Ctrl+N` or the `FilePlus` icon): prompts for a name; `.md` is added automatically if omitted.
+- **New Folder** (`FolderPlus` icon): prompts for a name.
+
+### Right-click context menu
+
+Right-click any file or folder in the tree for:
+
+| Action | Description |
 |---|---|
-| `Ctrl+S` | Save |
-| `Ctrl+W` | Close tab |
-| `Ctrl+Tab` | Next tab |
-| `Ctrl+P` | Command palette |
-| `Ctrl+F` | Search |
-| `Ctrl+D` | Today's daily note |
-| `Ctrl+N` | New file |
-| `Ctrl+B` | Toggle sidebar |
-| `Ctrl+Shift+Space` | Quick Capture (global, works when app is in background) |
+| **New File / New Folder** | Create inside that directory |
+| **Rename** | Inline rename; updates all open tabs and the search index automatically |
+| **Move to…** | Pick any other directory in the vault; cascades to tabs and search |
+| **Copy Path** | Copies the absolute path to the clipboard |
+| **Lock / Unlock** | Set or verify a directory password (see [Directory Locks](#directory-locks)) |
+| **Delete** | Removes the file or folder; evicts from all open tabs |
 
-### WikiLinks
+### File watcher
 
-Write `[[Note Name]]` or `[[Note Name|Display Text]]` anywhere in a note. In the preview, clicking the link opens the target file. The graph and backlinks panel are built from these links.
+VaultNote watches your vault with a debounced (500 ms) Rust file watcher. If you edit a note externally (in VS Code, etc.) and it has an open tab that is not dirty, the tab reloads automatically.
 
-### Knowledge graph
+---
 
-Click the **🔗 Network** icon in the status bar (or the sidebar header). The graph shows every note as a node and every `[[WikiLink]]` as an edge. You can:
-- **Drag** nodes to rearrange
-- **Zoom / pan** with scroll + drag
-- **Click a node** to open that note and close the graph
+## The Editor
 
-### Semantic search & Similar Notes
+### Split view
 
-On first vault open, VaultNote downloads `all-MiniLM-L6-v2` (~22 MB, once) and indexes all your Markdown files in the background. After the model is ready:
-- Press **Ctrl+F**, switch to the **Semantic** tab, and type a natural-language query.
-- Open the **✨ Sparkles** panel (status bar) to see the 6 most similar notes to the one currently open, sorted by cosine similarity.
+The editor area is split between a **CodeMirror 6** source editor (left/top) and a **Markdown preview** (right/bottom). You can:
+
+- Drag the divider to adjust the split ratio.
+- Toggle the editor pane: status bar editor icon or `Ctrl+Shift+E`.
+- Toggle the preview pane: status bar preview icon or `Ctrl+Shift+V`.
+- Flip the layout (side-by-side ↔ top-bottom): status bar flip icon.
+
+### Source editor features
+
+- Full Markdown syntax highlighting (CodeMirror `@codemirror/lang-markdown` with all code language support)
+- Bracket matching and auto-close
+- Line numbers, highlight active line
+- Word wrap (toggleable in Settings)
+- Indentation with Tab
+- History (undo/redo)
+- Drag-and-drop images: drop an image file onto the editor; it is copied to `vault/_assets/`, and a `![name](_assets/file.ext)` link is inserted at the drop position.
+
+### Preview features
+
+- Full GFM (GitHub Flavored Markdown): tables, strikethrough, task lists, etc.
+- Syntax-highlighted code blocks (via `highlight.js` — GitHub Dark theme)
+- Wiki-link rendering (styled as `[[Link]]` with click navigation)
+- Relative image rendering (paths resolved to Tauri asset URLs automatically)
+- YouTube embeds: paste a YouTube URL on its own line; preview shows the video thumbnail and title, lazy-loading the iframe on click
+- Click any preview block to jump the source editor to that line (click-to-edit)
+- Scroll sync: scrolling editor or preview moves the other pane to the matching line
+
+### Auto-save
+
+Changes are auto-saved after an idle period (default: 1 second). Configurable in Settings (500 ms – 5 s). A dirty dot (●) on the tab indicates unsaved changes. Save manually with `Ctrl+S`.
+
+### Canvas files
+
+Files with a `.canvas` extension open in the [Canvas](#canvas) view instead of the editor.
+
+---
+
+## Markdown & Wiki-Links
+
+### Supported syntax
+
+VaultNote renders standard CommonMark + GitHub Flavored Markdown extensions:
+
+- Headings, bold, italic, strikethrough, inline code, code blocks
+- Tables, task lists (checkboxes disabled in preview — edit the source)
+- Blockquotes, horizontal rules
+- Images and links
+
+### Wiki-Links
+
+Type `[[Note Name]]` to link to another note by its filename (without extension). Capitalization and spaces are normalized.
+
+- Use a pipe for custom display text: `[[Note Name|What you see]]`
+- Click a wiki-link in the preview to open that note.
+- Unresolved links (file does not exist) are still rendered but do nothing on click.
 
 ### Backlinks
 
-The ✨ Sparkles panel also shows a **Backlinks** section — every note that links *to* the current file via `[[WikiLink]]`.
-
-### Entity panel
-
-Click the **🏷 Tag** icon in the status bar. VaultNote extracts and groups:
-- `#Hashtags` and `@Mentions` from the text
-- **Tech terms** (200+ keywords: React, Python, Docker, etc.)
-- **Concepts** (capitalised multi-word phrases)
-- **Dates** and **URLs**
-
-### Flashcard review (spaced repetition)
-
-Write flashcards anywhere in a note using this format:
-
-```
-Q: What is the SM-2 algorithm?
-A: A spaced-repetition scheduling algorithm that adjusts review intervals based on recall quality.
-
-Q: What does PBKDF2 stand for?
-A: Password-Based Key Derivation Function 2.
-```
-
-Click the **🧠 Brain** icon in the status bar to start a review session for the current file. Rate each card **Again / Hard / Good / Easy** after flipping it. The next review date is calculated automatically.
-
-### YouTube video cards
-
-Paste a YouTube URL on its own line (no other text on that line):
-
-```
-https://www.youtube.com/watch?v=dQw4w9WgXcQ
-```
-
-The preview renders it as a card with the video thumbnail, title, and channel name. Click the card to open YouTube.
-
-### Highlighting
-
-Select any text in the preview — a colour toolbar appears above the selection. Click a colour to save the highlight. Highlights survive re-renders and are stored in a hidden sidecar file (`.filename.md.highlights.json`). Double-click a highlighted word to remove it.
-
-### Quick Capture
-
-Press **`Ctrl+Shift+Space`** from anywhere on your desktop (even when VaultNote is minimised). A small floating window appears. Type your thought, then press **Ctrl+Enter** (or the Save button) to append it to `Inbox.md` in your vault root. Press **Esc** to dismiss without saving.
-
-### Per-directory password protection
-
-1. Right-click a folder → **Lock Directory…**
-2. Enter and confirm a password. A `.vaultnote-lock.json` file is written inside that folder.
-
-To access: click (or right-click → **Unlock for Session…**) and enter the password. The folder stays unlocked until the app closes.
-
-To remove: right-click an unlocked folder → **Remove Password…**
-
-### Vault Intelligence Lock
-
-Click the **🛡 Shield** icon in the sidebar header.
-
-- **First time (Setup mode):** Enter and confirm a password. The AI embeddings index is encrypted on disk from this point on. The lock badge next to the vault name shows "locked" when the password hasn't been entered yet for this session.
-- **Subsequent opens (Unlock mode):** Enter the password to decrypt the index and enable semantic search and Similar Notes.
-- **Remove lock:** Enter the current password and click "Remove lock" to switch back to unencrypted storage.
-
-> Without a Vault Intelligence Lock, the embeddings index (`.vaultnote-embeddings.json`) is stored as plaintext. Your Markdown files are **never** encrypted either way.
-
-### Canvas
-
-Create a file with a `.canvas` extension to open the infinite canvas view. Use the toolbar to add cards, then drag, resize, and connect them freely.
+The **Related Notes** panel (Sparkles icon in the status bar) shows which other notes link *to* the current note in a **Backlinks** section.
 
 ---
 
-## Project Scripts
+## Tabs
 
-| Command | Description |
+- **Open**: click a file in the sidebar, or click a wiki-link.
+- **Close**: click the × on the tab, or `Ctrl+W`. A dirty tab asks for confirmation.
+- **Reorder**: drag tabs left or right.
+- **Pin**: right-click a tab to pin it; pinned tabs cannot be closed with `Ctrl+W`.
+- **Middle-click**: closes a tab.
+- **Restore**: `Ctrl+Shift+T` reopens the last closed tab (up to 10 remembered).
+- **Switch by number**: `Ctrl+1` through `Ctrl+9` jumps to the nth tab.
+
+Tabs survive app restarts (persisted in `localStorage`).
+
+---
+
+## Full-Text Search
+
+Press `Ctrl+F` or `Ctrl+P` to open the search modal.
+
+- Powered by **Fuse.js** — fuzzy matching across note titles (weight 2×) and content (weight 1×).
+- Results show the note title, a highlighted excerpt around the match, and the parent directory.
+- Arrow keys to navigate; `Enter` to open the selected note.
+- Switch to Semantic Search mode by clicking the **Semantic** tab or pressing `Tab` inside the modal.
+
+The index is built in the background when a vault loads and updated incrementally on every save.
+
+---
+
+## Semantic (AI) Search
+
+VaultNote embeds every note locally using **all-MiniLM-L6-v2** (22 MB, runs in WebView2 via ONNX WebAssembly). The model is downloaded once and cached by the browser.
+
+### Setup
+
+No configuration needed. When you open a vault:
+
+1. The model downloads in the background (progress shown in the Vault Intelligence status).
+2. Notes are embedded one batch at a time; unchanged notes (detected by content hash) are skipped on subsequent loads.
+3. The embedding index is saved to `.vaultnote-embeddings.json` in your vault root so the next load is fast.
+
+A ✦ (Sparkles) icon in the sidebar filter input lights up when the model is ready.
+
+### Using semantic search
+
+- **Sidebar filter**: type any query. Below the name-match results, a **Semantic** section appears with the top 8 most similar notes and a percentage score.
+- **Search modal**: switch to the **Semantic** tab for a full semantic search with similarity bars.
+- Short queries (1–2 words) are automatically expanded internally for better accuracy (e.g., "TV" → "TV TV topics and notes about TV").
+
+### Similarity scores
+
+Scores reflect cosine similarity of 384-dimensional embedding vectors:
+
+| Score | Meaning |
 |---|---|
-| `npm run dev` | Vite dev server only (no Tauri shell) |
-| `npm run build` | TypeScript compile + Vite production build |
-| `npm run tauri dev` | Full dev build with Tauri shell + hot-reload |
-| `npm run tauri build` | Production `.exe` / installer |
+| 70%+ | Strongly related |
+| 45–70% | Thematically related |
+| < 45% | Loosely related |
 
 ---
 
-## Contributing
+## Knowledge Graph
 
-1. Fork the repo and create a feature branch.
-2. Run `npm run tauri dev` to verify your changes locally.
-3. Keep PRs focused — one feature or fix per PR.
+Click the **Network** icon in the sidebar header to open the Knowledge Graph — a force-directed visualization of all notes and their connections.
+
+### Node types
+
+- Every `.md` file is a node.
+- The **active file** appears larger and highlighted in the accent color.
+- Click any node to open that note.
+- Drag nodes to pin them; release to let them float again.
+- Zoom (0.15× – 5×) and pan with scroll/drag on the background.
+
+### Edge types
+
+| Edge | Appearance | Meaning |
+|---|---|---|
+| **Wiki** | Solid gray line with arrow | An explicit `[[Wiki-Link]]` from one note to another |
+| **Semantic** | Dashed colored line with arrow | AI-detected thematic similarity above the current threshold |
+
+### Controls
+
+**Links toggle** — show/hide wiki-link edges (displays count).
+
+**Semantic toggle** — show/hide semantic edges (displays visible / total count).
+
+**Color mode** (Palette icon, visible when semantic edges are on) — when active, each semantic edge is colored on a log-scale gradient:
+
+- Red → low similarity
+- Yellow → moderate similarity
+- Green → high similarity
+
+The scale is logarithmic: because real semantic scores rarely exceed 0.7–0.8, the color midpoint (yellow) corresponds to a score of ~0.38 rather than 0.50, giving a much more useful color spread across the realistic range.
+
+**Similarity threshold slider** — drag to set the minimum similarity score for displaying semantic edges (0.10 – 0.99). The current threshold value is displayed in its own gradient color so you can immediately see where you are on the scale. Edge counts update live.
+
+**Redraw button** — re-runs the force simulation from scratch.
 
 ---
 
-## License
+## Related Notes Panel
 
-MIT
+Open from the status bar **Sparkles** icon (or the Graph button inside the editor).
+
+Two sections:
+
+**Semantically Similar** — the 6 most similar notes to the current file, with similarity percentages. Color-coded: green (> 60%), accent (45–60%), muted (< 45%). Updates when you switch tabs.
+
+**Backlinks** — notes that contain a `[[Wiki-Link]]` pointing to the current file.
+
+---
+
+## Entity Panel
+
+Open from the status bar **Tag** icon.
+
+Extracts structured entities from the current note using regex (no ML, instant):
+
+| Type | Example |
+|---|---|
+| Hashtag | `#project` |
+| Mention | `@alice` |
+| Tech term | React, Kubernetes, WASM |
+| Concept | Capitalized 2–4 word phrases |
+| Date | 2024-01-15, January 15, etc. |
+| URL | https://… |
+
+Entities are grouped by type and shown as tag chips with a tooltip showing how many times they appear.
+
+---
+
+## Quick Capture
+
+Press `Ctrl+Shift+Space` (global — works even when VaultNote is in the background or minimized) to open a small floating capture window.
+
+### How it works
+
+1. The capture window appears in the top-right of your screen, transparent and always on top.
+2. Type or paste your content.
+3. Press `Ctrl+Enter` to save, or `Escape` to dismiss without saving.
+
+### Auto-titling
+
+VaultNote inspects the first line of your content:
+
+- **Starts with a Markdown heading** (`# Title`, `## Title`, etc.) → saved as its own file named after the heading. If `Title.md` already exists, it tries `Title 2.md`, `Title 3.md`, etc.
+- **No heading** → appended as a timestamped entry to `Inbox.md` in your vault root.
+
+The footer of the capture window shows a live destination hint (e.g., `📄 → My Article.md` or `📥 → Inbox.md`) before you save.
+
+This makes it ideal for dumping LLM responses: paste the response, and if the AI put a `# Title` at the top, the file is automatically created and named correctly.
+
+---
+
+## Flashcards
+
+VaultNote turns any note into a flashcard deck. Add question/answer pairs in this format anywhere in a note:
+
+```
+Q: What is spaced repetition?
+A: A memorization technique where review intervals increase based on recall quality.
+
+Q: Who invented the SM-2 algorithm?
+A: Piotr Wozniak.
+```
+
+### Using flashcard mode
+
+1. Open the note containing Q/A pairs.
+2. Click the **Brain** icon in the status bar.
+3. Cards are presented one at a time. Click the card to reveal the answer.
+4. Rate yourself: **Again** (forgot), **Hard**, **Good**, **Easy**.
+5. VaultNote uses the SM-2 algorithm to schedule each card's next review. Cards due today are prioritized; the rest are shown in order.
+
+SM-2 state (repetitions, interval, ease factor) is persisted in `localStorage`.
+
+---
+
+## Canvas
+
+Double-click any `.canvas` file to open the infinite canvas view (or create one via New File with a `.canvas` extension).
+
+### Canvas controls
+
+| Action | How |
+|---|---|
+| Pan | Drag the background |
+| Zoom | Scroll wheel (0.2× – 2.5×) |
+| Reset zoom | Reset button (HUD) |
+| New card | Double-click background, or "+ Card" button |
+| Move card | Drag card header |
+| Resize card | Drag bottom-right handle |
+| Edit card | Double-click card body |
+| Delete card | Select card → Delete/Backspace |
+| Color card | Click color dot on card header |
+
+Cards render full Markdown including code highlighting. Canvas state is auto-saved 800 ms after any change.
+
+---
+
+## Text Highlights
+
+While in preview mode, select any text with your mouse. A floating color toolbar appears with five colors: Yellow, Green, Blue, Pink, and Orange.
+
+- Click a color to create a highlight.
+- Highlights are shown as `<mark>` elements in the preview.
+- Double-click an existing highlight to remove it.
+- Highlights are stored in hidden sidecar files (e.g., `.MyNote.highlights.json`) and do not modify your Markdown source.
+
+---
+
+## Daily Notes & Templates
+
+Press `Ctrl+D` to open or create today's daily note. It is stored at:
+
+```
+vault/Journal/yyyy/yyyy-MM-dd.md
+```
+
+The file is created with a date heading and sections for Today / Notes / Tasks if it doesn't exist yet.
+
+### Note templates
+
+The Command Palette (`Ctrl+Shift+P`) offers five templates:
+
+| Template | Description |
+|---|---|
+| Daily Note | Date, Today, Notes, Tasks |
+| Meeting Note | Attendees, Agenda, Notes, Action Items |
+| Research Note | Source, Key Findings, Questions, References |
+| Reflection | What went well, What to improve, Gratitude |
+| Idea | Problem, Solution, Implementation, Next Steps |
+
+---
+
+## Vault Intelligence Lock
+
+VaultNote's AI features (semantic search, knowledge graph) rely on an embedding index stored in `.vaultnote-embeddings.json`. If your notes are sensitive, you can encrypt this index with a password.
+
+Click the **Shield** icon in the sidebar header.
+
+- **Set up lock**: choose a password. The index is re-saved in AES-GCM encrypted form. The PBKDF2-derived key (200,000 iterations, SHA-256) is verified against a stored hash — the password itself is never written anywhere.
+- **Unlock**: enter your password each session. The index is decrypted in memory only.
+- **Remove lock**: verified removal; index is re-saved unencrypted.
+
+The vault's `.md` files are **not** encrypted — this lock protects only the AI metadata.
+
+---
+
+## Directory Locks
+
+Right-click any folder → **Lock**. Set a password for that directory.
+
+This is an **app-level access gate** (not filesystem encryption). When a locked directory is clicked:
+
+1. A password prompt appears.
+2. Correct password → files are accessible for the rest of the session.
+3. Wrong password → access denied.
+
+The lock file (`.vaultnote-lock.json`) stores only a PBKDF2 hash, never the password. You can re-lock, change the password, or remove the lock via the same right-click menu.
+
+---
+
+## Settings
+
+Open with `Ctrl+,` or the sidebar Settings icon.
+
+| Setting | Options | Default |
+|---|---|---|
+| **Theme** | Dark, Light, System | Dark |
+| **Editor Font Family** | Mono, Sans-serif, Serif | Mono |
+| **Editor Font Size** | 12–20 px | 14 px |
+| **Line Height** | 1.2–2.0 | 1.7 |
+| **Editor Width** | Readable (prose-width), Full | Readable |
+| **Word Wrap** | On / Off | On |
+| **Spell Check** | On / Off | Off |
+| **Show Preview** | On / Off | On |
+| **Preview Side** | Right, Bottom | Right |
+| **Auto-save Interval** | 500 ms – 5 s | 1 s |
+
+---
+
+## Keyboard Shortcuts
+
+### Global (work even when the app is unfocused)
+
+| Shortcut | Action |
+|---|---|
+| `Ctrl+Shift+Space` | Toggle Quick Capture window |
+
+### App shortcuts
+
+| Shortcut | Action |
+|---|---|
+| `Ctrl+F` / `Ctrl+P` | Open search modal |
+| `Ctrl+Shift+P` | Open command palette |
+| `Ctrl+S` | Save current file |
+| `Ctrl+N` | New file |
+| `Ctrl+D` | Open / create today's daily note |
+| `Ctrl+W` | Close active tab |
+| `Ctrl+Shift+T` | Restore last closed tab |
+| `Ctrl+B` | Toggle sidebar |
+| `Ctrl+Shift+E` | Toggle editor pane |
+| `Ctrl+Shift+V` | Toggle preview pane |
+| `Ctrl+,` | Open settings |
+| `Ctrl+1` – `Ctrl+9` | Switch to tab by index |
+| `Escape` | Close topmost overlay |
+
+Shortcuts are ignored when a text input or textarea has focus, so they don't interfere with typing.
+
+---
+
+## Internal Files Written to Your Vault
+
+VaultNote creates the following hidden files inside your vault. They are filtered out of the sidebar but are standard files you can back up or delete:
+
+| File | Purpose | Encrypted? |
+|---|---|---|
+| `.vaultnote-registry.json` | UUID ↔ path map for stable note identity | No |
+| `.vaultnote-embeddings.json` | AI embedding vectors + content hashes | Optional (Vault Intelligence Lock) |
+| `.vaultnote-intel.lock` | Vault Intelligence Lock descriptor (hash only) | N/A |
+| `.vaultnote-lock.json` | Per-directory lock descriptor (hash only) | N/A |
+| `.<filename>.highlights.json` | Text highlights sidecar for each note | No |
+
+Deleting any of these files is safe — VaultNote will rebuild them on next launch (embeddings will re-compute, highlights will be lost).
