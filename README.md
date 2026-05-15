@@ -25,7 +25,12 @@ Built with **Tauri v2 + React 18 + CodeMirror 6**.
 
 ## Screenshots
 
-> _Add screenshots here after first run._
+<img width="3840" height="2160" alt="image" src="https://github.com/user-attachments/assets/8fdef4fc-3f05-4c88-9b2d-2d03639ac4cd" />
+<img width="3840" height="2160" alt="image" src="https://github.com/user-attachments/assets/0f6ce125-0c4a-4ed4-b7e4-bc8e4404d933" />
+<img width="3840" height="2160" alt="image" src="https://github.com/user-attachments/assets/ce8b341f-2770-4eb8-93e2-ba0d3f98649a" />
+
+
+
 
 ---
 
