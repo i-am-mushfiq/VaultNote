@@ -86,6 +86,8 @@ const CodeMirrorEditor = forwardRef<EditorHandle, Props>(function CodeMirrorEdit
             fontFamily:
               settings.editorFontFamily === 'mono'
                 ? "'JetBrains Mono', 'Fira Code', Consolas, monospace"
+                : settings.editorFontFamily === 'serif'
+                ? "'Georgia', 'Palatino Linotype', 'Book Antiqua', serif"
                 : "'Inter', system-ui, sans-serif",
             background: isDark ? '#1a1a1a' : '#ffffff',
             color:      isDark ? '#e2e2e2' : '#1a1a1a',
@@ -201,15 +203,15 @@ const CodeMirrorEditor = forwardRef<EditorHandle, Props>(function CodeMirrorEdit
       drawSelection(),
       dropCursor(),
       EditorState.allowMultipleSelections.of(true),
+      EditorState.tabSize.of(settings.tabSize ?? 2),
       indentOnInput(),
       bracketMatching(),
       closeBrackets(),
       rectangularSelection(),
       crosshairCursor(),
-      highlightActiveLine(),
-      highlightActiveLineGutter(),
       highlightSelectionMatches(),
-      lineNumbers(),
+      ...(settings.showLineNumbers     ? [lineNumbers()]                                    : []),
+      ...(settings.highlightActiveLine ? [highlightActiveLine(), highlightActiveLineGutter()] : []),
       markdown({ base: markdownLanguage, codeLanguages: languages }),
       syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
       keymap.of([
@@ -224,7 +226,8 @@ const CodeMirrorEditor = forwardRef<EditorHandle, Props>(function CodeMirrorEdit
         ...historyKeymap,
         indentWithTab,
       ]),
-      EV.lineWrapping,
+      EV.contentAttributes.of({ spellcheck: settings.spellCheck ? 'true' : 'false' }),
+      ...(settings.wordWrap ? [EV.lineWrapping] : []),
       buildTheme(isDark),
       ...(isDark ? [oneDark] : []),
       updateListener,

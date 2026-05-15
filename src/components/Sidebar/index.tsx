@@ -8,6 +8,7 @@ import { useGraphStore } from '@/stores/graphStore';
 import { useEmbeddingStore } from '@/stores/embeddingStore';
 import { useVaultPasswordStore } from '@/stores/vaultPasswordStore';
 import { useNoteRegistryStore } from '@/stores/noteRegistryStore';
+import { useSettingsStore } from '@/stores/settingsStore';
 import { pathUtils } from '@/lib/pathUtils';
 import FileTreeNode from './FileTreeNode';
 import GraphView from '@/components/GraphView';
@@ -23,6 +24,7 @@ import {
   Lock,
   Sparkles,
   FileText,
+  Settings,
 } from 'lucide-react';
 
 import type { FileNode } from '@/types';
@@ -36,6 +38,7 @@ export default function Sidebar() {
   const graphStore = useGraphStore();
   const embeddingStore = useEmbeddingStore();
   const vaultPasswordStore = useVaultPasswordStore();
+  const { settings } = useSettingsStore();
 
   const [filter, setFilter] = useState('');
   const [showGraph, setShowGraph] = useState(false);
@@ -58,18 +61,23 @@ export default function Sidebar() {
     graphStore.indexAll(mdPaths);
 
     const password = vaultPasswordStore.password ?? undefined;
+    const { enableSemanticSearch, semanticThreshold, semanticMaxEdges } = settings;
 
-    // Start model download eagerly — don't wait for file indexing to begin
-    embeddingStore.warmModel();
+    if (enableSemanticSearch) {
+      // Start model download eagerly — don't wait for file indexing to begin
+      embeddingStore.warmModel();
 
-    embeddingStore.loadIndex(currentVault.path, password).then(() => {
-      embeddingStore.indexAll(currentVault.path, mdPaths, password).then(() => {
-        // Once embeddings are ready, enrich the knowledge graph with semantic edges.
-        // Read live state — the closure-captured embeddingStore.index is a stale snapshot.
-        const liveIndex = useEmbeddingStore.getState().index;
-        if (liveIndex.size > 1) graphStore.addSemanticEdges(liveIndex);
+      embeddingStore.loadIndex(currentVault.path, password).then(() => {
+        embeddingStore.indexAll(currentVault.path, mdPaths, password).then(() => {
+          // Once embeddings are ready, enrich the knowledge graph with semantic edges.
+          // Read live state — the closure-captured embeddingStore.index is a stale snapshot.
+          const liveIndex = useEmbeddingStore.getState().index;
+          if (liveIndex.size > 1) {
+            graphStore.addSemanticEdges(liveIndex, semanticThreshold, semanticMaxEdges);
+          }
+        });
       });
-    });
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentVault?.path, isLoading, rootNodes.length]);
 
@@ -127,7 +135,7 @@ export default function Sidebar() {
       )
     : null;
 
-  const modelReady = embeddingStore.modelStatus === 'ready';
+  const modelReady = embeddingStore.modelStatus === 'ready' && settings.enableSemanticSearch;
   const hasQuery   = filter.trim().length > 0;
 
   return (
@@ -148,6 +156,7 @@ export default function Sidebar() {
           <button className="icon-btn" title="Vault Intelligence Lock"  onClick={() => setShowVaultLock(true)}><Shield size={14} /></button>
           <button className="icon-btn" title="New File (Ctrl+N)"        onClick={handleNewFile}><FilePlus size={14} /></button>
           <button className="icon-btn" title="New Folder"               onClick={handleNewFolder}><FolderPlus size={14} /></button>
+          <button className="icon-btn" title="Settings (Ctrl+,)"        onClick={() => useUIStore.getState().openSettings()}><Settings size={14} /></button>
           <button className="icon-btn" title="Refresh"                  onClick={() => currentVault && refreshVault(currentVault.path)}><RefreshCw size={13} /></button>
           <button className="icon-btn" title="Collapse Sidebar (Ctrl+B)" onClick={toggleSidebar}><ChevronLeft size={14} /></button>
         </div>

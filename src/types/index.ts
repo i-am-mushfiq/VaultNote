@@ -42,19 +42,36 @@ export interface SearchIndex {
 }
 
 export interface Settings {
+  // Appearance
   theme: 'dark' | 'light' | 'system';
+  accentColor: string;           // CSS hex color for --accent
+
+  // Editor
   editorFontSize: number;
   editorLineHeight: number;
   editorWidth: 'full' | 'readable' | 'narrow';
-  editorFontFamily: 'mono' | 'sans';
-  showPreview: boolean;
-  showEditor: boolean;
-  previewSide: 'right' | 'bottom';
-  autoSaveInterval: number;
-  sidebarWidth: number;
+  editorFontFamily: 'mono' | 'sans' | 'serif';
   wordWrap: boolean;
   spellCheck: boolean;
-  editorPreviewSplit: number; // 0.2 – 0.8, fraction of width given to editor
+  showLineNumbers: boolean;
+  highlightActiveLine: boolean;
+  tabSize: 2 | 4;
+
+  // Layout / preview
+  showEditor: boolean;
+  showPreview: boolean;
+  previewSide: 'right' | 'bottom';
+  editorPreviewSplit: number;    // 0.2 – 0.8, fraction of width given to editor
+  sidebarWidth: number;
+
+  // Saving
+  autoSaveInterval: number;
+  autoSaveOnSwitch: boolean;     // save dirty tab immediately on tab switch
+
+  // Intelligence (AI / semantic)
+  enableSemanticSearch: boolean;
+  semanticThreshold: number;     // 0.1 – 0.9, base threshold for graph edges
+  semanticMaxEdges: number;      // 1 – 15, max semantic connections per note
 }
 
 export interface Highlight {
