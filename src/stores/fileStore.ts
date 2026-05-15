@@ -4,23 +4,29 @@ import { fs } from '@/lib/fs';
 import { pathUtils } from '@/lib/pathUtils';
 import { buildIndex } from '@/lib/search';
 import { extractTitle } from '@/lib/markdown';
+import { useTabStore } from './tabStore';
+import { useEditorStore } from './editorStore';
+import { useEmbeddingStore } from './embeddingStore';
+import { useNoteRegistryStore } from './noteRegistryStore';
 
 interface FileStore {
-  rootNodes: FileNode[];
-  flatNodes: Map<string, FileNode>;
-  isLoading: boolean;
-  error: string | null;
+  rootNodes:  FileNode[];
+  flatNodes:  Map<string, FileNode>;
+  isLoading:  boolean;
+  error:      string | null;
+  vaultPath:  string | null;
 
-  loadVault: (vaultPath: string) => Promise<void>;
-  expandDir: (node: FileNode) => Promise<void>;
-  collapseDir: (path: string) => void;
-  toggleDir: (node: FileNode) => Promise<void>;
-  createFile: (parentPath: string, name: string) => Promise<string>;
-  createFolder: (parentPath: string, name: string) => Promise<string>;
-  deleteNode: (path: string, isDirectory: boolean) => Promise<void>;
-  renameNode: (oldPath: string, newName: string) => Promise<string>;
-  refreshNode: (parentPath: string) => Promise<void>;
-  refreshVault: (vaultPath: string) => Promise<void>;
+  loadVault:     (vaultPath: string) => Promise<void>;
+  expandDir:     (node: FileNode) => Promise<void>;
+  collapseDir:   (path: string) => void;
+  toggleDir:     (node: FileNode) => Promise<void>;
+  createFile:    (parentPath: string, name: string) => Promise<string>;
+  createFolder:  (parentPath: string, name: string) => Promise<string>;
+  deleteNode:    (path: string, isDirectory: boolean) => Promise<void>;
+  renameNode:    (oldPath: string, newName: string) => Promise<string>;
+  moveNode:      (oldPath: string, targetDir: string) => Promise<string>;
+  refreshNode:   (parentPath: string) => Promise<void>;
+  refreshVault:  (vaultPath: string) => Promise<void>;
 }
 
 function makeNode(
@@ -48,13 +54,14 @@ function makeNode(
 }
 
 export const useFileStore = create<FileStore>((set, get) => ({
-  rootNodes: [],
-  flatNodes: new Map(),
-  isLoading: false,
-  error: null,
+  rootNodes:  [],
+  flatNodes:  new Map(),
+  isLoading:  false,
+  error:      null,
+  vaultPath:  null,
 
   loadVault: async (vaultPath) => {
-    set({ isLoading: true, error: null, rootNodes: [], flatNodes: new Map() });
+    set({ isLoading: true, error: null, rootNodes: [], flatNodes: new Map(), vaultPath });
     try {
       const entries = await fs.readDir(vaultPath);
       const nodes = entries.map((e) =>
@@ -138,8 +145,20 @@ export const useFileStore = create<FileStore>((set, get) => ({
 
   deleteNode: async (path, isDirectory) => {
     await fs.removePath(path, isDirectory);
+
     const { flatNodes } = get();
     const node = flatNodes.get(path);
+
+    // Clean stale entry from flatNodes before refresh
+    const newFlat = new Map(flatNodes);
+    newFlat.delete(path);
+    set({ flatNodes: newFlat });
+
+    // Cascade: clean editor cache and embedding index
+    useEditorStore.getState().removeContent(path);
+    useEmbeddingStore.getState().removeIndexEntry(path);
+    useNoteRegistryStore.getState().deregister(path);
+
     if (node?.parentPath) {
       await get().refreshNode(node.parentPath);
     }
@@ -147,47 +166,109 @@ export const useFileStore = create<FileStore>((set, get) => ({
 
   renameNode: async (oldPath, newName) => {
     const dir = pathUtils.dirname(oldPath);
-    const ext = pathUtils.isMarkdown(oldPath) && !newName.includes('.')
-      ? '.md'
-      : '';
+    const ext = pathUtils.isMarkdown(oldPath) && !newName.includes('.') ? '.md' : '';
     const newPath = pathUtils.join(dir, newName + ext);
     await fs.renamePath(oldPath, newPath);
+
     const { flatNodes } = get();
     const node = flatNodes.get(oldPath);
-    if (node?.parentPath) {
-      await get().refreshNode(node.parentPath);
-    }
+    const parentPath = node?.parentPath ?? dir;
+
+    // Remove the stale entry so refreshNode doesn't resurrect it
+    const newFlat = new Map(flatNodes);
+    newFlat.delete(oldPath);
+    set({ flatNodes: newFlat });
+
+    // Refresh parent directory to pick up the renamed entry
+    await get().refreshNode(parentPath);
+
+    // Cascade renames across stores
+    useTabStore.getState().renameTabPath(oldPath, newPath);
+    useEditorStore.getState().renameContentPath(oldPath, newPath);
+    useEmbeddingStore.getState().renameIndexEntry(oldPath, newPath);
+    useNoteRegistryStore.getState().movePath(oldPath, newPath);
+
     return newPath;
   },
 
-  refreshNode: async (parentPath) => {
+  moveNode: async (oldPath, targetDir) => {
+    const name    = pathUtils.basename(oldPath);
+    const newPath = pathUtils.join(targetDir, name);
+    await fs.renamePath(oldPath, newPath);   // renamePath works for cross-dir moves too
+
     const { flatNodes } = get();
+    const node = flatNodes.get(oldPath);
+    const oldParentPath = node?.parentPath ?? pathUtils.dirname(oldPath);
+
+    // Remove stale entry
+    const newFlat = new Map(flatNodes);
+    newFlat.delete(oldPath);
+    set({ flatNodes: newFlat });
+
+    // Refresh both the old parent and the target directory
+    await get().refreshNode(oldParentPath);
+    await get().refreshNode(targetDir);
+
+    // Cascade renames across stores
+    useTabStore.getState().renameTabPath(oldPath, newPath);
+    useEditorStore.getState().renameContentPath(oldPath, newPath);
+    useEmbeddingStore.getState().renameIndexEntry(oldPath, newPath);
+    useNoteRegistryStore.getState().movePath(oldPath, newPath);
+
+    return newPath;
+  },
+
+  // ── refreshNode ─────────────────────────────────────────────────────────────
+  // Handles both root-level and nested directories.
+  // Removes stale children from flatNodes so renamed/deleted entries disappear.
+  refreshNode: async (parentPath) => {
+    const { flatNodes, vaultPath, rootNodes } = get();
+    const isRoot   = parentPath === vaultPath;
     const parentNode = flatNodes.get(parentPath);
 
     try {
-      const entries = await fs.readDir(parentPath);
-      const depth = parentNode ? parentNode.depth + 1 : 0;
-      const children = entries.map((e) =>
+      const entries   = await fs.readDir(parentPath);
+      const depth     = isRoot ? 0 : (parentNode ? parentNode.depth + 1 : 0);
+      const freshKids = entries.map((e) =>
         makeNode(e.path, e.name, e.is_directory, depth, parentPath, e.modified, e.size),
       );
 
-      const newFlat = new Map(flatNodes);
-      if (parentNode) {
+      const newFlat        = new Map(flatNodes);
+      const newKidPaths    = new Set(freshKids.map((c) => c.path));
+
+      // Determine the old set of direct children to diff against
+      const oldKids = isRoot ? rootNodes : (parentNode?.children ?? []);
+      for (const oldKid of oldKids) {
+        if (!newKidPaths.has(oldKid.path)) {
+          newFlat.delete(oldKid.path); // remove stale entry
+        }
+      }
+
+      // Merge: preserve expanded/loaded state for nodes that still exist
+      const mergedKids = freshKids.map((c) => {
+        const existing = newFlat.get(c.path);
+        return existing
+          ? { ...existing, name: c.name, modified: c.modified, size: c.size }
+          : c;
+      });
+
+      if (isRoot) {
+        // Update root nodes directly — parentNode doesn't exist in flatNodes for the vault root
+        mergedKids.forEach((c) => newFlat.set(c.path, c));
+        set({ flatNodes: newFlat, rootNodes: mergedKids });
+      } else if (parentNode) {
         newFlat.set(parentPath, {
           ...parentNode,
-          children,
+          children:       mergedKids,
           childrenLoaded: true,
-          isExpanded: true,
+          isExpanded:     true,
         });
+        mergedKids.forEach((c) => newFlat.set(c.path, c));
+        set({ flatNodes: newFlat });
+        syncRootNodes(get, set);
       }
-      children.forEach((c) => {
-        const existing = newFlat.get(c.path);
-        newFlat.set(c.path, existing ? { ...existing, name: c.name, modified: c.modified } : c);
-      });
-      set({ flatNodes: newFlat });
-      syncRootNodes(get, set);
     } catch {
-      // ignore
+      // ignore read errors (e.g. permission denied)
     }
   },
 
@@ -206,16 +287,19 @@ function syncRootNodes(
       const updated = flatNodes.get(n.path) ?? n;
       return {
         ...updated,
-        children: updated.isExpanded && updated.childrenLoaded
-          ? updateChildren(updated.children)
-          : updated.children,
+        children:
+          updated.isExpanded && updated.childrenLoaded
+            ? updateChildren(updated.children)
+            : updated.children,
       };
     });
   set({ rootNodes: updateChildren(rootNodes) });
 }
 
 async function buildSearchIndex(vaultPath: string) {
-  const collect = async (dirPath: string): Promise<Array<{ path: string; title: string; content: string }>> => {
+  const collect = async (
+    dirPath: string,
+  ): Promise<Array<{ path: string; title: string; content: string }>> => {
     try {
       const entries = await fs.readDir(dirPath);
       const results: Array<{ path: string; title: string; content: string }> = [];
@@ -226,8 +310,8 @@ async function buildSearchIndex(vaultPath: string) {
           try {
             const content = await fs.readTextFile(entry.path);
             results.push({
-              path: entry.path,
-              title: extractTitle(content, pathUtils.stem(entry.name)),
+              path:    entry.path,
+              title:   extractTitle(content, pathUtils.stem(entry.name)),
               content,
             });
           } catch {

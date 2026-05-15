@@ -13,6 +13,8 @@ interface EditorStore {
   saveFile: (path: string, content: string) => Promise<void>;
   setContent: (path: string, content: string) => void;
   getContent: (path: string) => string;
+  renameContentPath: (oldPath: string, newPath: string) => void;
+  removeContent: (path: string) => void;
 }
 
 export const useEditorStore = create<EditorStore>((set, get) => ({
@@ -86,4 +88,24 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   },
 
   getContent: (path) => get().contents.get(path) ?? '',
+
+  renameContentPath(oldPath, newPath) {
+    set((s) => {
+      const existing = s.contents.get(oldPath);
+      if (existing === undefined) return {};
+      const newContents = new Map(s.contents);
+      newContents.delete(oldPath);
+      newContents.set(newPath, existing);
+      return { contents: newContents };
+    });
+  },
+
+  removeContent(path) {
+    set((s) => {
+      if (!s.contents.has(path)) return {};
+      const newContents = new Map(s.contents);
+      newContents.delete(path);
+      return { contents: newContents };
+    });
+  },
 }));

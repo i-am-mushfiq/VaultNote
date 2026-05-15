@@ -36,6 +36,19 @@ export const pathUtils = {
     return ext === '.md' || ext === '.markdown';
   },
 
+  // Resolve . and .. components in a Windows-style path
+  normalize(p: string): string {
+    const parts = p.replace(/[/\\]+/g, '\\').split('\\');
+    const resolved: string[] = [];
+    for (const part of parts) {
+      if (part === '.' || part === '') continue;
+      if (part === '..') resolved.pop();
+      else resolved.push(part);
+    }
+    // Preserve leading drive letter (e.g. "C:") or UNC paths
+    return resolved.join('\\');
+  },
+
   relative(from: string, to: string): string {
     const fromNorm = from.replace(/[/\\]+/g, SEP).replace(/\\$/, '');
     const toNorm = to.replace(/[/\\]+/g, SEP);

@@ -22,6 +22,20 @@
         "minHeight": 600,
         "decorations": true,
         "transparent": false
+      },
+      {
+        "label": "capture",
+        "title": "Quick Capture",
+        "url": "/?capture=1",
+        "width": 520,
+        "height": 300,
+        "resizable": false,
+        "center": true,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "visible": false,
+        "skipTaskbar": true
       }
     ],
     "security": {

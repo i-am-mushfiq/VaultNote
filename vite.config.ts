@@ -5,9 +5,18 @@ import path from 'path';
 export default defineConfig(async () => ({
   plugins: [react()],
   clearScreen: false,
+  optimizeDeps: {
+    exclude: ['@huggingface/transformers'],
+  },
   server: {
     port: 1420,
     strictPort: true,
+    // COOP + COEP headers enable SharedArrayBuffer, which lets the ONNX runtime
+    // use its multi-threaded WASM backend for faster embeddings.
+    headers: {
+      'Cross-Origin-Opener-Policy':   'same-origin',
+      'Cross-Origin-Embedder-Policy': 'require-corp',
+    },
     watch: {
       ignored: ['**/src-tauri/**'],
     },

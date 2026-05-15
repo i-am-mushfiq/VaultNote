@@ -3,7 +3,7 @@
   "identifier": "default",
   "description": "Default capabilities for VaultNote",
   "platforms": ["linux", "macOS", "windows"],
-  "windows": ["main"],
+  "windows": ["main", "capture"],
   "permissions": [
     "core:default",
     "dialog:default",
@@ -11,6 +11,10 @@
     "dialog:allow-save",
     "dialog:allow-ask",
     "dialog:allow-confirm",
-    "dialog:allow-message"
+    "dialog:allow-message",
+    "global-shortcut:default",
+    "global-shortcut:allow-register",
+    "global-shortcut:allow-unregister",
+    "global-shortcut:allow-is-registered"
   ]
 }

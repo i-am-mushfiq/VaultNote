@@ -48,12 +48,37 @@ export interface Settings {
   editorWidth: 'full' | 'readable' | 'narrow';
   editorFontFamily: 'mono' | 'sans';
   showPreview: boolean;
+  showEditor: boolean;
   previewSide: 'right' | 'bottom';
   autoSaveInterval: number;
   sidebarWidth: number;
   wordWrap: boolean;
   spellCheck: boolean;
   editorPreviewSplit: number; // 0.2 – 0.8, fraction of width given to editor
+}
+
+export interface Highlight {
+  id: string;
+  color: string;      // CSS color e.g. '#ffeb3b'
+  text: string;       // exact selected text (used for re-matching in DOM)
+  sourceLine: number; // nearest data-source-line ancestor when created
+  note?: string;      // optional annotation text
+  createdAt: string;  // ISO date
+}
+
+export interface CanvasNode {
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  content: string;   // raw markdown text of the card
+  color?: string;    // optional accent colour for the card border
+}
+
+export interface CanvasFile {
+  version: 1;
+  nodes: CanvasNode[];
 }
 
 export interface CommandItem {

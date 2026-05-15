@@ -34,6 +34,9 @@ export const fs = {
   copyFile: (src: string, dst: string): Promise<void> =>
     invoke('copy_file', { src, dst }),
 
+  writeBinaryFile: (path: string, bytes: number[]): Promise<void> =>
+    invoke('write_binary_file', { path, bytes }),
+
   getFileInfo: (path: string): Promise<DirEntryInfo> =>
     invoke('get_file_info', { path }),
 

@@ -6,11 +6,11 @@ import { useEditorStore } from '@/stores/editorStore';
 import { useLockStore } from '@/stores/lockStore';
 import { pathUtils } from '@/lib/pathUtils';
 import LockModal from '@/components/LockModal';
-import { FilePlus, FolderPlus, Pencil, Trash2, Copy, Lock, Unlock, KeyRound } from 'lucide-react';
+import { FilePlus, FolderPlus, Pencil, Trash2, Copy, Lock, Unlock, KeyRound, FolderInput, X } from 'lucide-react';
 
 export default function ContextMenuOverlay() {
   const { contextMenu, hideContextMenu, setRenameTarget } = useUIStore();
-  const { createFile, createFolder, deleteNode } = useFileStore();
+  const { createFile, createFolder, deleteNode, moveNode, flatNodes } = useFileStore();
   const { openTab, closeTabByPath } = useTabStore();
   const { loadFile } = useEditorStore();
   const lockStore = useLockStore();
@@ -19,6 +19,11 @@ export default function ContextMenuOverlay() {
   const [lockModal, setLockModal] = useState<'set' | 'verify' | 'remove' | null>(null);
   // Saved separately so modals survive the context menu being closed
   const [modalTarget, setModalTarget] = useState({ path: '', isDirectory: false });
+
+  // Move modal state
+  const [showMoveModal, setShowMoveModal] = useState(false);
+  const [moveSrcPath, setMoveSrcPath] = useState('');
+  const [moveFilter, setMoveFilter] = useState('');
 
   // Global mousedown closes the menu (only active while menu is open)
   useEffect(() => {
@@ -101,6 +106,35 @@ export default function ContextMenuOverlay() {
     lockStore.revokeSession(targetPath);
   });
 
+  const handleMoveClick = () => withTarget((targetPath) => {
+    setMoveSrcPath(targetPath);
+    setMoveFilter('');
+    hideContextMenu();
+    setShowMoveModal(true);
+  });
+
+  const handleMoveConfirm = async (targetDir: string) => {
+    setShowMoveModal(false);
+    try {
+      await moveNode(moveSrcPath, targetDir);
+    } catch (e) { console.error(e); }
+  };
+
+  // ── Derive available directories for the move modal ───────────────────────
+  const allDirs = Array.from(flatNodes.values())
+    .filter((n) => {
+      if (!n.isDirectory) return false;
+      if (n.path === moveSrcPath) return false;                          // can't move into itself
+      if (n.path === pathUtils.dirname(moveSrcPath)) return false;       // already there
+      if (pathUtils.relative(moveSrcPath, n.path) !== n.path) return false; // can't move into descendant
+      return true;
+    })
+    .sort((a, b) => a.path.localeCompare(b.path));
+
+  const filteredDirs = moveFilter.trim()
+    ? allDirs.filter((n) => n.path.toLowerCase().includes(moveFilter.toLowerCase()))
+    : allDirs;
+
   // ── Render ────────────────────────────────────────────────────────────────
 
   // Derive lock state for the currently-open menu (not the saved modal target)
@@ -131,6 +165,9 @@ export default function ContextMenuOverlay() {
 
           <div className="context-menu-item" onClick={handleRename}>
             <Pencil size={13} /> Rename
+          </div>
+          <div className="context-menu-item" onClick={handleMoveClick}>
+            <FolderInput size={13} /> Move to…
           </div>
           <div className="context-menu-item" onClick={handleCopyPath}>
             <Copy size={13} /> Copy Path
@@ -165,6 +202,74 @@ export default function ContextMenuOverlay() {
           <div className="context-menu-separator" />
           <div className="context-menu-item danger" onClick={handleDelete}>
             <Trash2 size={13} /> Delete
+          </div>
+        </div>
+      )}
+
+      {/* ── Move to… modal ─────────────────────────────────────────────── */}
+      {showMoveModal && (
+        <div
+          className="overlay-backdrop"
+          onMouseDown={() => setShowMoveModal(false)}
+        >
+          <div
+            className="modal-box fade-in"
+            style={{ maxWidth: 400 }}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '12px 16px', borderBottom: '1px solid var(--border)',
+            }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>
+                Move "{pathUtils.basename(moveSrcPath)}" to…
+              </span>
+              <button
+                onClick={() => setShowMoveModal(false)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', display: 'flex' }}
+              >
+                <X size={14} />
+              </button>
+            </div>
+
+            {/* Filter input */}
+            <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)' }}>
+              <input
+                autoFocus
+                value={moveFilter}
+                onChange={(e) => setMoveFilter(e.target.value)}
+                placeholder="Filter folders…"
+                style={{
+                  width: '100%', background: 'var(--bg-active)', border: '1px solid var(--border)',
+                  borderRadius: 4, padding: '5px 8px', fontSize: 12,
+                  color: 'var(--text-primary)', outline: 'none', boxSizing: 'border-box',
+                }}
+                onKeyDown={(e) => e.key === 'Escape' && setShowMoveModal(false)}
+              />
+            </div>
+
+            {/* Directory list */}
+            <div style={{ maxHeight: 280, overflowY: 'auto' }} className="modal-results">
+              {filteredDirs.length === 0 && (
+                <div style={{ padding: '20px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 12 }}>
+                  {allDirs.length === 0 ? 'No other folders in vault' : 'No matching folders'}
+                </div>
+              )}
+              {filteredDirs.map((dir) => (
+                <div
+                  key={dir.path}
+                  className="modal-result-item"
+                  onClick={() => handleMoveConfirm(dir.path)}
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}
+                >
+                  <FolderInput size={13} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+                  <span style={{ flex: 1, fontSize: 12, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {dir.path}
+                  </span>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       )}

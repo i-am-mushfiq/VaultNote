@@ -6,6 +6,7 @@ use std::path::Path;
 use std::sync::Mutex;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct DirEntryInfo {
@@ -117,6 +118,14 @@ fn path_exists(path: String) -> bool {
 }
 
 #[tauri::command]
+fn write_binary_file(path: String, bytes: Vec<u8>) -> Result<(), String> {
+    if let Some(parent) = Path::new(&path).parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    fs::write(&path, &bytes).map_err(|e| format!("Failed to write {}: {}", path, e))
+}
+
+#[tauri::command]
 fn copy_file(src: String, dst: String) -> Result<(), String> {
     if let Some(parent) = Path::new(&dst).parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -198,6 +207,29 @@ fn unwatch_vault(watcher_state: State<WatcherState>) {
     *watcher_state.0.lock().unwrap() = None;
 }
 
+// ── Quick Capture shortcut command ───────────────────────────────────────────
+
+#[tauri::command]
+fn toggle_capture_window(app: AppHandle) -> Result<(), String> {
+    if let Some(win) = app.get_webview_window("capture") {
+        if win.is_visible().unwrap_or(false) {
+            let _ = win.hide();
+        } else {
+            let _ = win.show();
+            let _ = win.set_focus();
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn hide_capture_window(app: AppHandle) -> Result<(), String> {
+    if let Some(win) = app.get_webview_window("capture") {
+        let _ = win.hide();
+    }
+    Ok(())
+}
+
 // ── App entry point ───────────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -205,9 +237,11 @@ pub fn run() {
     tauri::Builder::default()
         .manage(WatcherState(Mutex::new(None)))
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             read_text_file,
             write_text_file,
+            write_binary_file,
             read_dir,
             create_dir,
             remove_path,
@@ -217,12 +251,31 @@ pub fn run() {
             get_file_info,
             watch_vault,
             unwatch_vault,
+            toggle_capture_window,
+            hide_capture_window,
         ])
         .setup(|app| {
             #[cfg(debug_assertions)]
             if let Some(window) = app.get_webview_window("main") {
                 window.open_devtools();
             }
+            // Register Ctrl+Shift+Space as global quick-capture shortcut
+            let handle = app.handle().clone();
+            app.global_shortcut().on_shortcut(
+                "CommandOrControl+Shift+Space",
+                move |_app, _shortcut, event| {
+                    if event.state == ShortcutState::Pressed {
+                        if let Some(win) = handle.get_webview_window("capture") {
+                            if win.is_visible().unwrap_or(false) {
+                                let _ = win.hide();
+                            } else {
+                                let _ = win.show();
+                                let _ = win.set_focus();
+                            }
+                        }
+                    }
+                },
+            ).ok();
             Ok(())
         })
         .run(tauri::generate_context!())

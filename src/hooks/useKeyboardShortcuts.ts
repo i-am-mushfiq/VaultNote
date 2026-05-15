@@ -4,17 +4,42 @@ import { useTabStore } from '@/stores/tabStore';
 import { useEditorStore } from '@/stores/editorStore';
 import { useVaultStore } from '@/stores/vaultStore';
 import { useFileStore } from '@/stores/fileStore';
+import { useSettingsStore } from '@/stores/settingsStore';
 import { getDailyNotePath, getDailyNoteTemplate } from '@/lib/dailyNote';
 
 export function useKeyboardShortcuts() {
   const ui = useUIStore();
   const { openVault, currentVault } = useVaultStore();
+  const { updateSettings } = useSettingsStore();
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
+      // Don't intercept shortcuts when a native input/textarea has focus.
+      // The rename input and other inputs need full browser clipboard/undo support.
+      const targetTag = (e.target as HTMLElement).tagName;
+      if (targetTag === 'INPUT' || targetTag === 'TEXTAREA') return;
+
       const ctrl = e.ctrlKey || e.metaKey;
       const shift = e.shiftKey;
 
+      // Ctrl+F — open search modal (semantic + text)
+      if (ctrl && !shift && e.key === 'f') {
+        e.preventDefault();
+        ui.openSearch();
+        return;
+      }
+      // Ctrl+Shift+E — toggle editor pane
+      if (ctrl && shift && e.key === 'E') {
+        e.preventDefault();
+        updateSettings({ showEditor: !useSettingsStore.getState().settings.showEditor });
+        return;
+      }
+      // Ctrl+Shift+V — toggle preview pane
+      if (ctrl && shift && e.key === 'V') {
+        e.preventDefault();
+        updateSettings({ showPreview: !useSettingsStore.getState().settings.showPreview });
+        return;
+      }
       if (ctrl && !shift && e.key === 'p') {
         e.preventDefault();
         ui.openSearch();
@@ -91,7 +116,7 @@ export function useKeyboardShortcuts() {
         if (ui.contextMenu) { ui.hideContextMenu(); return; }
       }
     },
-    [ui, currentVault],
+    [ui, currentVault, updateSettings],
   );
 
   useEffect(() => {

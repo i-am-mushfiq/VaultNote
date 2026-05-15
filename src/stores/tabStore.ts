@@ -28,6 +28,7 @@ interface TabStore {
   getTabByPath: (path: string) => Tab | undefined;
   updateTabTitle: (path: string, content: string) => void;
   closeTabByPath: (path: string) => void;
+  renameTabPath: (oldPath: string, newPath: string) => void;
 }
 
 let tabCounter = 0;
@@ -139,6 +140,16 @@ export const useTabStore = create<TabStore>()(
         const { tabs } = get();
         const tab = tabs.find((t) => t.path === path);
         if (tab) get().closeTab(tab.id);
+      },
+
+      renameTabPath: (oldPath, newPath) => {
+        set((s) => ({
+          tabs: s.tabs.map((t) =>
+            t.path === oldPath
+              ? { ...t, path: newPath, title: pathUtils.stem(newPath) || pathUtils.basename(newPath) }
+              : t,
+          ),
+        }));
       },
     }),
     {

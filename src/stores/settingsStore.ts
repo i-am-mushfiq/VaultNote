@@ -15,6 +15,7 @@ const DEFAULT_SETTINGS: Settings = {
   editorWidth: 'readable',
   editorFontFamily: 'mono',
   showPreview: true,
+  showEditor: true,
   previewSide: 'right',
   autoSaveInterval: 1000,
   sidebarWidth: 260,
