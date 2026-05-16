@@ -10,6 +10,8 @@ import { useVaultPasswordStore } from '@/stores/vaultPasswordStore';
 import { useNoteRegistryStore } from '@/stores/noteRegistryStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { pathUtils } from '@/lib/pathUtils';
+import { isDirectoryLocked } from '@/lib/directoryLock';
+import { useLockStore } from '@/stores/lockStore';
 import FileTreeNode from './FileTreeNode';
 import GraphView from '@/components/GraphView';
 import VaultLock from '@/components/VaultLock';
@@ -78,6 +80,24 @@ export default function Sidebar() {
         });
       });
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentVault?.path, isLoading, rootNodes.length]);
+
+  // ── Eager directory-lock detection ───────────────────────────────────────
+  // Scan every top-level directory for a lock file as soon as the vault tree
+  // is available. This pre-populates `lockedPaths` before any click so the
+  // file tree hides locked directories' contents from the very first render.
+  useEffect(() => {
+    if (!currentVault || isLoading || rootNodes.length === 0) return;
+    const lockStore = useLockStore.getState();
+    for (const node of rootNodes) {
+      if (!node.isDirectory) continue;
+      if (lockStore.isLocked(node.path) || lockStore.isSessionUnlocked(node.path)) continue;
+      isDirectoryLocked(node.path).then((locked) => {
+        if (locked) useLockStore.getState().markLocked(node.path);
+      }).catch(() => {/* ignore permission errors */});
+    }
+  // rootNodes.length is enough — the array identity changes on vault refresh
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentVault?.path, isLoading, rootNodes.length]);
 

@@ -6,6 +6,7 @@ import { useHighlightStore } from '@/stores/highlightStore';
 import { useGraphStore } from '@/stores/graphStore';
 import { wordCount } from '@/lib/markdown';
 import { pathUtils } from '@/lib/pathUtils';
+import { isEncryptedContent } from '@/lib/directoryLock';
 import EditorTabs from './EditorTabs';
 import CodeMirrorEditor, { type EditorHandle } from './CodeMirrorEditor';
 import MarkdownPreview, { type PreviewHandle } from './MarkdownPreview';
@@ -88,22 +89,27 @@ export default function EditorArea() {
   useEffect(() => {
     if (!activeTab || isCanvas) { setLocalContent(''); return; }
     const existing = getContent(activeTab.path);
-    if (existing) {
+    // Guard: never display ciphertext — if the session is unlocked later the
+    // sync effect below will pull in the decrypted content automatically.
+    if (existing && !isEncryptedContent(existing)) {
       setLocalContent(existing);
       graphStore.indexFile(activeTab.path, existing);
     } else {
       loadFile(activeTab.path).then((c) => {
-        setLocalContent(c);
-        graphStore.indexFile(activeTab.path, c);
+        const safe = isEncryptedContent(c) ? '' : c;
+        setLocalContent(safe);
+        if (safe) graphStore.indexFile(activeTab.path, safe);
       });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab?.path]);
 
-  // Sync external content changes
+  // Sync external content changes (runs every render — intentional polling).
+  // Hard-filter: ciphertext can never reach the screen through this path either.
   useEffect(() => {
     if (!activeTab || isCanvas) return;
     const stored = getContent(activeTab.path);
+    if (isEncryptedContent(stored)) return;          // never display ciphertext
     if (stored !== undefined && stored !== localContent) {
       setLocalContent(stored);
     }

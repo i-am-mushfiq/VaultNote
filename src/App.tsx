@@ -1,10 +1,36 @@
 import { useEffect } from 'react';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useVaultStore } from '@/stores/vaultStore';
+import { useTabStore } from '@/stores/tabStore';
+import { useEditorStore } from '@/stores/editorStore';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 import { useAutoSave } from '@/hooks/useAutoSave';
 import VaultPicker from '@/components/VaultPicker';
 import Layout from '@/components/Layout';
+import { isEncryptedContent } from '@/lib/directoryLock';
+
+// ── One-time startup sanitiser ────────────────────────────────────────────────
+// The tab store is persisted to localStorage. If a previous session stored
+// ciphertext in savedContent (before the encryption fixes were deployed),
+// those values would survive restarts. Clear them so the editor never
+// receives ciphertext from the persisted layer.
+;(function sanitisePersistedCiphertext() {
+  const tabStore    = useTabStore.getState();
+  const editorStore = useEditorStore.getState();
+  tabStore.tabs.forEach((tab) => {
+    if (isEncryptedContent(tab.savedContent ?? '')) {
+      // Reset savedContent to empty so the tab appears clean (not dirty).
+      tabStore.updateSavedContent(tab.id, '');
+    }
+  });
+  // Also evict any in-memory editorStore entries that are ciphertext — this
+  // covers the case where Zustand state survived an HMR hot-reload.
+  editorStore.contents.forEach((content, path) => {
+    if (isEncryptedContent(content)) {
+      editorStore.removeContent(path);
+    }
+  });
+})();
 
 // Shift HSL lightness by `delta` (e.g. 0.08 to lighten)
 function adjustLightness(hex: string, delta: number): string {

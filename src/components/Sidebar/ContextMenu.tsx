@@ -103,6 +103,16 @@ export default function ContextMenuOverlay() {
 
   const handleRevokeSession = () => withTarget((targetPath) => {
     hideContextMenu();
+    // Close every tab from the re-locked directory and evict its cache.
+    useTabStore.getState().closeTabsUnderPath(targetPath);
+    const sep = targetPath + '\\';
+    useEditorStore.getState().contents.forEach((_, p) => {
+      if (p.startsWith(sep)) useEditorStore.getState().removeContent(p);
+    });
+    // Clear the in-memory virtual filesystem for this directory.
+    lockStore.clearVirtualContentsForDir(targetPath);
+    // Collapse the directory so no file names are visible.
+    useFileStore.getState().collapseDir(targetPath);
     lockStore.revokeSession(targetPath);
   });
 

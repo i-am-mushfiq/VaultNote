@@ -1,14 +1,25 @@
 import { useState, useRef, useEffect } from 'react';
-import { Lock, Unlock, Eye, EyeOff, AlertCircle } from 'lucide-react';
-import { setDirectoryLock, verifyDirectoryPassword, removeDirectoryLock } from '@/lib/directoryLock';
+import { Lock, Unlock, Eye, EyeOff, AlertCircle, ShieldCheck } from 'lucide-react';
+import {
+  setDirectoryLock,
+  verifyDirectoryPassword,
+  removeDirectoryLock,
+  createVaultArchive,
+  openVaultArchive,
+  extractVaultArchive,
+  migrateToArchiveIfNeeded,
+} from '@/lib/directoryLock';
 import { useLockStore } from '@/stores/lockStore';
+import { useTabStore } from '@/stores/tabStore';
+import { useEditorStore } from '@/stores/editorStore';
+import { useFileStore } from '@/stores/fileStore';
 import { pathUtils } from '@/lib/pathUtils';
 
 interface Props {
   dirPath: string;
-  /** 'set'    → create a new lock (two-field confirm flow)
+  /** 'set'    → create a new lock + encrypt all existing files
    *  'verify' → enter password to unlock for this session
-   *  'remove' → verify then permanently remove the lock
+   *  'remove' → verify then decrypt all files + permanently remove the lock
    */
   mode: 'set' | 'verify' | 'remove';
   onSuccess: () => void;
@@ -16,11 +27,13 @@ interface Props {
 }
 
 export default function LockModal({ dirPath, mode, onSuccess, onCancel }: Props) {
-  const [password, setPassword]     = useState('');
-  const [confirm, setConfirm]       = useState('');
-  const [showPw, setShowPw]         = useState(false);
-  const [error, setError]           = useState<string | null>(null);
-  const [loading, setLoading]       = useState(false);
+  const [password, setPassword]   = useState('');
+  const [confirm, setConfirm]     = useState('');
+  const [showPw, setShowPw]       = useState(false);
+  const [error, setError]         = useState<string | null>(null);
+  const [loading, setLoading]     = useState(false);
+  const [progress, setProgress]   = useState<string | null>(null);
+
   const inputRef = useRef<HTMLInputElement>(null);
   const { markLocked, grantSession, markPermanentlyUnlocked } = useLockStore();
 
@@ -34,55 +47,104 @@ export default function LockModal({ dirPath, mode, onSuccess, onCancel }: Props)
 
     if (!password) { setError('Password is required.'); return; }
 
+    // ── Set lock ─────────────────────────────────────────────────────────────
     if (mode === 'set') {
       if (password.length < 4) { setError('Password must be at least 4 characters.'); return; }
       if (password !== confirm) { setError('Passwords do not match.'); return; }
+
       setLoading(true);
       try {
+        // 1. Write the lock manifest (PBKDF2 hash/salt for future verification)
         await setDirectoryLock(dirPath, password);
+
+        // 2. Pack ALL .md files into one encrypted archive, then delete originals.
+        //    After this step, no file names or structure are visible on disk.
+        setProgress('Archiving & encrypting…');
+        await createVaultArchive(dirPath, password);
+        setProgress(null);
+
+        // 3. Close all open tabs from this directory and evict their plaintext.
+        useTabStore.getState().closeTabsUnderPath(dirPath);
+        const sep = dirPath + '\\';
+        useEditorStore.getState().contents.forEach((_, p) => {
+          if (p.startsWith(sep)) useEditorStore.getState().removeContent(p);
+        });
+
+        // 4. Clear any virtual contents left from a prior session.
+        useLockStore.getState().clearVirtualContentsForDir(dirPath);
+
+        // 5. Collapse the directory in the file tree so it appears sealed.
+        useFileStore.getState().collapseDir(dirPath);
+
+        // 6. Mark as locked — no session granted. User must re-authenticate.
         markLocked(dirPath);
-        grantSession(dirPath);   // immediately unlocked for this session
+
         onSuccess();
       } catch (err) {
         setError(`Failed to lock directory: ${err}`);
+        setProgress(null);
       } finally {
         setLoading(false);
       }
       return;
     }
 
-    // verify or remove — both need correct password first
+    // ── Verify or remove — both need the correct password first ──────────────
     setLoading(true);
     try {
       const ok = await verifyDirectoryPassword(dirPath, password);
       if (!ok) { setError('Incorrect password. Try again.'); return; }
 
       if (mode === 'verify') {
-        grantSession(dirPath);
+        // Migrate from old per-file format if this directory was locked before
+        // the archive format was introduced. One-time, transparent upgrade.
+        setProgress('Checking format…');
+        const migrated = await migrateToArchiveIfNeeded(dirPath, password);
+        if (migrated) setProgress('Migrated to archive format…');
+
+        // Decrypt the archive into memory — populate virtual FS.
+        setProgress('Decrypting archive…');
+        const contents = await openVaultArchive(dirPath, password);
+        setProgress(null);
+
+        grantSession(dirPath, password);
+        useLockStore.getState().setVirtualContents(contents);
         onSuccess();
       } else {
-        // remove
+        // remove: migrate old format if needed, then extract archive to files
+        setProgress('Checking format…');
+        await migrateToArchiveIfNeeded(dirPath, password);
+        setProgress('Restoring files…');
+        await extractVaultArchive(dirPath, password);
+        setProgress(null);
+
         await removeDirectoryLock(dirPath);
+        useLockStore.getState().clearVirtualContentsForDir(dirPath);
         markPermanentlyUnlocked(dirPath);
+
+        // Refresh the tree so the real restored files appear.
+        useFileStore.getState().refreshNode(dirPath);
         onSuccess();
       }
     } catch (err) {
       setError(`Error: ${err}`);
+      setProgress(null);
     } finally {
       setLoading(false);
     }
   };
 
   const title =
-    mode === 'set'    ? `Lock "${dirName}"` :
+    mode === 'set'    ? `Encrypt & Lock "${dirName}"` :
     mode === 'verify' ? `Unlock "${dirName}"` :
-                        `Remove lock from "${dirName}"`;
+                        `Remove Lock from "${dirName}"`;
 
-  const Icon = mode === 'set' ? Lock : Unlock;
+  const Icon = mode === 'set' ? Lock : mode === 'verify' ? Unlock : ShieldCheck;
+
   const submitLabel =
-    mode === 'set'    ? 'Lock directory' :
+    mode === 'set'    ? 'Encrypt & Lock' :
     mode === 'verify' ? 'Unlock' :
-                        'Remove lock';
+                        'Decrypt & Remove Lock';
 
   return (
     <div className="overlay-backdrop" onClick={onCancel}>
@@ -111,21 +173,22 @@ export default function LockModal({ dirPath, mode, onSuccess, onCancel }: Props)
         <form onSubmit={handleSubmit} style={{ padding: '16px 20px 20px' }}>
           {mode === 'set' && (
             <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 16, lineHeight: 1.5 }}>
-              This directory will be password-protected. You'll need the password to access
-              it in VaultNote. Files remain on disk — this protects access through the app.
+              All <code>.md</code> files in this directory will be{' '}
+              <strong>AES-256 encrypted on disk</strong>. Only VaultNote (with the
+              correct password) can read them. If you lose the password, the notes
+              cannot be recovered.
             </p>
           )}
           {mode === 'remove' && (
             <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 16, lineHeight: 1.5 }}>
-              Enter the current password to permanently remove the lock.
+              Enter the current password to decrypt all files and permanently remove
+              the lock. Files will be restored to plaintext on disk.
             </p>
           )}
 
           {/* Password field */}
           <div style={{ marginBottom: mode === 'set' ? 12 : 20 }}>
-            <label
-              style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}
-            >
+            <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>
               {mode === 'set' ? 'New password' : 'Password'}
             </label>
             <div style={{ position: 'relative' }}>
@@ -172,9 +235,7 @@ export default function LockModal({ dirPath, mode, onSuccess, onCancel }: Props)
           {/* Confirm field (set mode only) */}
           {mode === 'set' && (
             <div style={{ marginBottom: 20 }}>
-              <label
-                style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}
-              >
+              <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>
                 Confirm password
               </label>
               <input
@@ -194,6 +255,19 @@ export default function LockModal({ dirPath, mode, onSuccess, onCancel }: Props)
                   fontFamily: 'monospace',
                 }}
               />
+            </div>
+          )}
+
+          {/* Progress indicator */}
+          {progress && (
+            <div style={{
+              fontSize: 13, color: 'var(--text-secondary)',
+              marginBottom: 16, padding: '8px 12px',
+              background: 'var(--bg-elevated)', borderRadius: 6,
+              display: 'flex', alignItems: 'center', gap: 8,
+            }}>
+              <span style={{ animation: 'spin 1s linear infinite', display: 'inline-block' }}>⟳</span>
+              {progress}
             </div>
           )}
 
@@ -223,6 +297,7 @@ export default function LockModal({ dirPath, mode, onSuccess, onCancel }: Props)
             <button
               type="button"
               onClick={onCancel}
+              disabled={loading}
               style={{
                 padding: '7px 16px',
                 borderRadius: 7,
@@ -230,7 +305,8 @@ export default function LockModal({ dirPath, mode, onSuccess, onCancel }: Props)
                 border: '1px solid var(--border)',
                 color: 'var(--text-secondary)',
                 fontSize: 13,
-                cursor: 'pointer',
+                cursor: loading ? 'not-allowed' : 'pointer',
+                opacity: loading ? 0.6 : 1,
               }}
             >
               Cancel

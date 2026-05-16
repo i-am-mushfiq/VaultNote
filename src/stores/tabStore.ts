@@ -28,6 +28,7 @@ interface TabStore {
   getTabByPath: (path: string) => Tab | undefined;
   updateTabTitle: (path: string, content: string) => void;
   closeTabByPath: (path: string) => void;
+  closeTabsUnderPath: (dirPath: string) => void;
   renameTabPath: (oldPath: string, newPath: string) => void;
 }
 
@@ -150,6 +151,15 @@ export const useTabStore = create<TabStore>()(
               : t,
           ),
         }));
+      },
+
+      // Close every tab whose file lives under dirPath (used when a directory is locked).
+      closeTabsUnderPath: (dirPath) => {
+        const sep = dirPath.endsWith('\\') ? dirPath : dirPath + '\\';
+        const { tabs } = get();
+        tabs
+          .filter((t) => t.path.startsWith(sep))
+          .forEach((t) => get().closeTab(t.id));
       },
     }),
     {
