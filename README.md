@@ -35,7 +35,7 @@ A local-first, AI-powered Markdown knowledge base — built with Tauri, React, a
 
 VaultNote is built around one idea: **your knowledge should live on your machine, in plain Markdown files, and be as smart as possible without ever leaving your device.**
 
-- Every note is a `.md` file you can open in any editor.
+- Every note is a `.md` file you can open in any editor — unless it lives in a locked directory, in which case it is AES-256-GCM encrypted on disk and only accessible through VaultNote after entering your password.
 - AI embeddings are computed locally (no API key, no internet after first model download).
 - Encryption is done in the browser with AES-GCM; passwords never touch disk.
 - The app is a thin Tauri shell — your vault is just a folder.
@@ -54,8 +54,8 @@ VaultNote is built around one idea: **your knowledge should live on your machine
 | **Flashcards** | SM-2 spaced repetition, parsed from `Q:`/`A:` blocks in any note |
 | **Canvas** | Infinite freeform canvas, markdown cards, color-coded, drag/resize |
 | **Highlights** | In-preview text highlights, 5 colors, persisted as sidecar files |
-| **Security** | Per-directory password locks, Vault Intelligence Lock (encrypts AI index) |
-| **Portability** | Plain `.md` files — works with Obsidian, Typora, VS Code, etc. |
+| **Security** | Real AES-256-GCM encryption for locked directories (single-archive approach), Vault Intelligence Lock (encrypts AI index) |
+| **Portability** | Plain `.md` files — works with Obsidian, Typora, VS Code, etc. (for unlocked notes) |
 
 ---
 
@@ -433,7 +433,7 @@ Click the **Shield** icon in the sidebar header.
 - **Unlock**: enter your password each session. The index is decrypted in memory only.
 - **Remove lock**: verified removal; index is re-saved unencrypted.
 
-The vault's `.md` files are **not** encrypted — this lock protects only the AI metadata.
+The vault's `.md` files are **not** encrypted by this feature — this lock protects only the AI metadata. To encrypt the notes themselves, use [Directory Locks](#directory-locks).
 
 ---
 
@@ -441,13 +441,42 @@ The vault's `.md` files are **not** encrypted — this lock protects only the AI
 
 Right-click any folder → **Lock**. Set a password for that directory.
 
-This is an **app-level access gate** (not filesystem encryption). When a locked directory is clicked:
+This is **real AES-256-GCM encryption** — your note contents are cryptographically protected on disk, not merely hidden behind an app-level gate.
 
-1. A password prompt appears.
-2. Correct password → files are accessible for the rest of the session.
-3. Wrong password → access denied.
+### What happens when you lock a directory
 
-The lock file (`.vaultnote-lock.json`) stores only a PBKDF2 hash, never the password. You can re-lock, change the password, or remove the lock via the same right-click menu.
+1. VaultNote reads all `.md` files in the directory and serialises them into a single JSON manifest: `{ version: 1, files: { "rel/path.md": "content", ... } }`.
+2. That manifest is AES-256-GCM encrypted using a key derived from your password via PBKDF2 (200,000 iterations, SHA-256).
+3. The ciphertext is written to `.vaultnote-vault` inside the directory.
+4. The original `.md` files are **permanently deleted from disk**. Empty subdirectories are pruned.
+5. A `.vaultnote-lock.json` file stores the PBKDF2 salt and a SHA-256 hash of the derived key (for future password verification). The actual encryption key is never stored anywhere.
+
+After locking, the directory on disk contains exactly two files: `.vaultnote-lock.json` and `.vaultnote-vault`. No file names, no directory structure, and no note count are visible to anyone without the password.
+
+### What happens when you unlock (session access)
+
+1. You enter your password; VaultNote verifies it against the hash in `.vaultnote-lock.json`.
+2. The `.vaultnote-vault` archive is decrypted **in memory only** — nothing is written back to disk.
+3. The decrypted file paths and content are held in an in-memory virtual file system for the duration of your session.
+4. The file tree in the sidebar synthesises the virtual files as normal nodes — you can open, edit, create, and delete notes just as you would with unlocked files.
+5. When you save an edit to a note inside the locked directory, VaultNote updates the in-memory content, re-encrypts the entire archive, and writes the new ciphertext to `.vaultnote-vault`. **No plaintext ever touches disk.**
+
+### Permanently removing a lock
+
+Right-click the directory → **Remove Lock** (requires your password). VaultNote decrypts the archive, restores all `.md` files to disk, and deletes `.vaultnote-vault`.
+
+### Security of the lock file
+
+`.vaultnote-lock.json` contains two fields:
+
+- **`salt`**: public by design (a random value that prevents rainbow-table attacks); not secret.
+- **`hash`**: a PBKDF2-derived key hash, equivalent in role to a bcrypt or Argon2 stored hash. It cannot be reversed to recover your password.
+
+The only attack vector against a locked directory is offline brute-force against the PBKDF2 hash. The 200,000-iteration count makes this computationally expensive.
+
+### Re-locking a session
+
+Right-click the directory → **Revoke Session**. This clears the in-memory virtual file system for that directory — the decrypted content is gone from memory and the directory is locked again until you re-enter the password.
 
 ---
 
@@ -509,7 +538,8 @@ VaultNote creates the following hidden files inside your vault. They are filtere
 | `.vaultnote-registry.json` | UUID ↔ path map for stable note identity | No |
 | `.vaultnote-embeddings.json` | AI embedding vectors + content hashes | Optional (Vault Intelligence Lock) |
 | `.vaultnote-intel.lock` | Vault Intelligence Lock descriptor (hash only) | N/A |
-| `.vaultnote-lock.json` | Per-directory lock descriptor (hash only) | N/A |
+| `.vaultnote-lock.json` | Per-directory lock descriptor (PBKDF2 salt + key hash) | N/A |
+| `.vaultnote-vault` | AES-256-GCM encrypted archive of all `.md` files in a locked directory | Yes (always) |
 | `.<filename>.highlights.json` | Text highlights sidecar for each note | No |
 
-Deleting any of these files is safe — VaultNote will rebuild them on next launch (embeddings will re-compute, highlights will be lost).
+Deleting any of these files is safe — VaultNote will rebuild them on next launch (embeddings will re-compute, highlights will be lost). **Do not delete `.vaultnote-vault` while a directory is locked** — that file is the only copy of your notes for that directory.

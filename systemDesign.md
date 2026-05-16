@@ -69,7 +69,7 @@ MarkDown_NoteTaker/
 │
 ├── src/
 │   ├── main.tsx                # React root; routes capture vs. main window
-│   ├── App.tsx                 # Theme wiring, hooks mount, vault routing
+│   ├── App.tsx                 # Theme wiring, hooks mount, vault routing, ciphertext sanitiser
 │   ├── index.css               # All global CSS + CSS custom properties
 │   │
 │   ├── types/
@@ -85,7 +85,7 @@ MarkDown_NoteTaker/
 │   │   ├── search.ts           # Fuse.js index wrapper
 │   │   ├── sm2.ts              # SM-2 spaced repetition algorithm
 │   │   ├── vaultCrypto.ts      # AES-GCM + PBKDF2 (vault-level)
-│   │   ├── directoryLock.ts    # Per-directory PBKDF2 lock helpers
+│   │   ├── directoryLock.ts    # Per-directory AES-256-GCM archive encryption
 │   │   └── dailyNote.ts        # Daily note path + templates
 │   │
 │   ├── stores/                 # Zustand stores (one concern per file)
@@ -260,7 +260,8 @@ This is the only routing in the app. There is no React Router.
 1. Read `settingsStore` → write `data-theme` attribute on `<html>` (triggering CSS variable swaps)
 2. Write `--editor-font-size` and `--editor-line-height` CSS variables to `document.documentElement.style`
 3. Mount `useKeyboardShortcuts()` and `useAutoSave()` hooks globally
-4. Render `<VaultPicker />` when `currentVault === null`, else `<Layout />`
+4. Run a startup sanitiser IIFE before first render — clears any ciphertext that may have been persisted to `tabStore.savedContent` or `editorStore.contents` (guards against the old bug where `loadFile` cached raw ciphertext to localStorage, and against HMR state pollution in development)
+5. Render `<VaultPicker />` when `currentVault === null`, else `<Layout />`
 
 ### Layout.tsx
 
@@ -293,9 +294,9 @@ All state is managed with **Zustand**. The stores are independent modules; cross
 
 ```
 vaultStore          (no deps)
-fileStore           → editorStore, tabStore, embeddingStore, noteRegistryStore
+fileStore           → editorStore, tabStore, embeddingStore, noteRegistryStore, lockStore
 tabStore            (no deps)
-editorStore         → tabStore, searchStore
+editorStore         → tabStore, searchStore, lockStore
 graphStore          → embeddings lib (cosineSim)
 embeddingStore      → embeddings lib
 flashcardStore      → sm2 lib
@@ -320,9 +321,11 @@ lockStore           (no deps)
 - **Not persisted** (rebuilds from disk on vault open)
 - Core state: `rootNodes: FileNode[]`, `flatNodes: Map<string, FileNode>`, `vaultPath: string | null`
 - `flatNodes` is the canonical source of truth for all known paths; `rootNodes` is the display tree derived from it
-- Lazy directory expansion: `expandDir` reads children from disk only when a folder is first opened
-- All CRUD operations cascade to sibling stores (see [CRUD Cascade Model](#15-crud-cascade-model))
-- `refreshNode(parentPath)` is the core reconciliation function — it merges fresh disk state with existing `isExpanded`/`childrenLoaded` flags so the tree doesn't collapse on refresh
+- Lazy directory expansion: `expandDir` reads children from disk when a folder is first opened — **unless** the directory has a session-unlocked ancestor, in which case it calls `findVirtualAncestor(node.path)` and, if found, synthesises `FileNode` children from `lockStore.virtualContents` via `buildVirtualChildren` (no disk read at all)
+- `createFile`: if the parent is inside a virtual (locked but unlocked for session) directory, adds the new file to `lockStore.virtualContents` and re-encrypts the archive to disk instead of writing to disk directly
+- `refreshNode(parentPath)`: if the directory is virtual, rebuilds children from `lockStore.virtualContents` instead of reading the filesystem; otherwise merges fresh disk state with existing `isExpanded`/`childrenLoaded` flags so the tree doesn't collapse on refresh
+- `deleteNode`: if the target file or directory is virtual, removes the path(s) from `lockStore.virtualContents` and re-encrypts the archive; otherwise performs the normal disk `removePath` cascade
+- All directory reads filter both `LOCK_FILENAME` (`.vaultnote-lock.json`) and `VAULT_ARCHIVE_FILENAME` (`.vaultnote-vault`) from the displayed tree
 
 **Root detection**: `vaultPath` is stored so `refreshNode` can distinguish the vault root (which is not itself a node in `flatNodes`) from subdirectories.
 
@@ -335,9 +338,9 @@ lockStore           (no deps)
 
 #### editorStore
 - **Not persisted**
-- `contents: Map<string, string>` — in-memory cache of file content keyed by absolute path
-- Reads first from cache, then from disk (`loadFile`)
-- `saveFile` writes to disk, updates cache, marks tab clean, triggers search index update
+- `contents: Map<string, string>` — in-memory cache of file content keyed by absolute path. Ciphertext is **never** stored in this map — triple-guarded: `loadFile` sanitises, `Editor/index.tsx` has a sync-effect guard, and `App.tsx`'s startup sanitiser evicts any persisted ciphertext from localStorage on boot.
+- `loadFile(path)`: checks `lockStore.virtualContents` before hitting disk — if the file path is found in the virtual FS, returns the in-memory plaintext directly without any disk read. For files that are not virtual but belong to a locked directory (legacy individually-encrypted format), decrypts them transparently using the session password. Cache miss on normal files falls through to `fs.readTextFile`.
+- `saveFile(path, content)`: calls `findSessionUnlockedAncestor(path)` to detect whether the file lives inside a session-unlocked locked directory. If found, updates `lockStore.virtualContents` for that path and re-encrypts the entire archive to disk via `saveVaultArchive` — no plaintext ever touches disk. If no virtual ancestor is found but an ancestor is in `lockedPaths`, falls through to per-file encryption (legacy path). Otherwise performs a normal `fs.writeTextFile`, updates cache, marks tab clean, and triggers search index update.
 - `setContent` marks tab dirty/clean by comparing against `tab.savedContent`
 
 #### graphStore
@@ -393,8 +396,32 @@ lockStore           (no deps)
 
 #### lockStore
 - **Not persisted**
-- Per-session directory unlock grants: `sessionUnlocked: Set<string>`
-- `FileTreeNode` calls `isLocked(path)` before allowing file access; `grantSession(path)` is called after successful `LockModal` verification
+- Tracks per-directory lock and session state, plus an in-memory virtual file system for session-unlocked archive directories.
+
+**State shape:**
+```typescript
+{
+  lockedPaths: Set<string>;         // dirs confirmed to have a .vaultnote-lock.json
+  sessionUnlocked: Set<string>;     // dirs unlocked this session (password verified)
+  sessionPasswords: Map<string, string>; // per-dir password held in memory for re-encryption
+  virtualContents: Map<string, string>;  // abs path → plaintext (in-memory virtual FS)
+}
+```
+
+**Virtual FS concept**: when a directory is unlocked for a session, its `.vaultnote-vault` archive is decrypted in memory and all file paths with their plaintext content are stored in `virtualContents`. This map acts as an in-memory overlay file system — no decrypted content ever reaches disk. The file tree, editor, and save path all consult `virtualContents` instead of the real filesystem for any path that belongs to a session-unlocked directory.
+
+**Methods:**
+- `grantSession(dirPath, password)` — marks a directory as session-unlocked, stores its password
+- `revokeSession(dirPath)` — removes session unlock and clears virtual contents for that dir (also called from `ContextMenu.handleRevokeSession`)
+- `isLocked(path)` — returns true if the directory has a lock file and is not session-unlocked
+- `setVirtualContents(map)` — replaces the entire virtual FS map (called on initial archive decrypt)
+- `updateVirtualContent(absPath, content)` — update a single file's plaintext (called on save)
+- `removeVirtualContent(absPath)` — remove a single file (called on virtual delete)
+- `clearVirtualContentsForDir(dirPath)` — evict all virtual entries under a given directory path (called on re-lock)
+- `getVirtualContent(absPath)` — retrieve plaintext for a single path
+- `hasVirtualContent(absPath)` — check if a path is in the virtual FS
+- `getAllVirtualPaths()` — returns all keys in `virtualContents`
+- `getVirtualPathsForDir(dirPath)` — returns all virtual paths under a given directory
 
 ---
 
@@ -553,9 +580,82 @@ decryptJson<T>(blob, password) → T
 
 `isEncryptedBlob(v)` type guard checks for the `encrypted: true` sentinel — used in `embeddingStore.loadIndex` to branch between plaintext and ciphertext.
 
-### directoryLock.ts
+### directoryLock.ts — Archive-based AES-256-GCM encryption
 
-Same crypto primitives as `vaultCrypto.ts` but scoped to individual directories. Lock file path: `pathUtils.join(dirPath, '.vaultnote-lock.json')`. Exposes `setDirectoryLock`, `verifyDirectoryPassword`, `removeDirectoryLock`, `isDirectoryLocked`.
+`directoryLock.ts` implements the full lifecycle of per-directory encryption. It uses the same PBKDF2 + AES-256-GCM primitives as `vaultCrypto.ts` but operates on a **single encrypted archive** (`.vaultnote-vault`) that contains all `.md` files in a directory packed into one JSON manifest.
+
+**Constants:**
+- `LOCK_FILENAME = '.vaultnote-lock.json'` — stores salt + key hash for password verification
+- `VAULT_ARCHIVE_FILENAME = '.vaultnote-vault'` — stores the AES-GCM ciphertext of the manifest
+
+**Archive manifest format (plaintext, before encryption):**
+```json
+{ "version": 1, "files": { "rel/path/to/note.md": "note content", ... } }
+```
+Keys are paths relative to the locked directory root. This means no absolute paths are embedded in the ciphertext, making the archive portable.
+
+**Exported functions:**
+
+```typescript
+// Low-level symmetric crypto (string in, string out)
+encryptContent(plaintext: string, password: string): Promise<string>
+  → VAULTNOTE_ENCRYPTED:1:<salt_hex>:<iv_hex>:<base64_ciphertext>
+
+decryptContent(encryptedStr: string, password: string): Promise<string>
+  → plaintext string
+
+isEncryptedContent(s: string): boolean
+  → checks for VAULTNOTE_ENCRYPTED:1 header prefix
+
+// Archive lifecycle
+createVaultArchive(dirPath: string, password: string): Promise<void>
+  → reads all .md files recursively
+  → serialises into manifest JSON
+  → AES-256-GCM encrypts
+  → writes .vaultnote-vault
+  → deletes all .md originals
+  → prunes empty subdirectories
+
+openVaultArchive(dirPath: string, password: string): Promise<Record<string, string>>
+  → reads .vaultnote-vault
+  → decrypts in memory
+  → returns { absPath: content } map (never writes to disk)
+
+saveVaultArchive(dirPath: string, password: string, absContents: Record<string, string>): Promise<void>
+  → re-serialises the abs-path map to relative-path manifest
+  → re-encrypts
+  → overwrites .vaultnote-vault (atomic write via Rust)
+
+extractVaultArchive(dirPath: string, password: string): Promise<void>
+  → decrypts archive
+  → writes all .md files back to disk (creates subdirs as needed)
+  → deletes .vaultnote-vault
+
+hasVaultArchive(dirPath: string): Promise<boolean>
+  → checks for existence of .vaultnote-vault
+
+// Lock file management
+setDirectoryLock(dirPath: string, password: string): Promise<void>
+  → derives key, stores salt + key hash in .vaultnote-lock.json
+
+verifyDirectoryPassword(dirPath: string, password: string): Promise<boolean>
+  → re-derives key, compares hash
+
+removeDirectoryLock(dirPath: string): Promise<void>
+  → deletes .vaultnote-lock.json
+
+isDirectoryLocked(dirPath: string): Promise<boolean>
+  → checks for existence of .vaultnote-lock.json
+
+// Migration shim
+migrateToArchiveIfNeeded(dirPath: string, password: string): Promise<void>
+  → detects old format: .md files on disk with VAULTNOTE_ENCRYPTED:1 headers
+  → decrypts each individually
+  → calls createVaultArchive to repack into the new format
+  → called automatically on first unlock of a legacy-format directory
+```
+
+**Removed from public API:** `encryptAllFiles` and `decryptAllFiles` (the old per-file approach) are no longer exported. They exist only inside `migrateToArchiveIfNeeded`.
 
 ### entities.ts
 
@@ -631,6 +731,8 @@ Rendered in a portal at the click position (`uiStore.contextMenu`). The **Move t
 - Excludes: self, current parent (`pathUtils.dirname(src) === dir`), descendants (`src` is a prefix of `dir`)
 - Calls `fileStore.moveNode(srcPath, targetDir)` on selection
 
+**Re-locking**: `handleRevokeSession` calls both `lockStore.revokeSession(targetPath)` (which removes the session unlock grant and password) and `lockStore.clearVirtualContentsForDir(targetPath)` (which evicts all decrypted content from the in-memory virtual FS). After this, the directory is inaccessible again until the user re-enters the password.
+
 ### Editor/CodeMirrorEditor.tsx
 
 Exposes `EditorHandle { scrollToLine(n) }` via `useImperativeHandle`. Key implementation details:
@@ -639,6 +741,7 @@ Exposes `EditorHandle { scrollToLine(n) }` via `useImperativeHandle`. Key implem
 - **Ctrl+F intercept**: a custom keymap extension captures `Ctrl+F` before `searchKeymap` and calls `uiStore.openSearch()` instead — the native CM6 search panel is not used.
 - **Image drag-drop**: `DOMEventHandlers` on `drop` event; calls `fs.copyFile` then reads drop position via `view.posAtCoords`.
 - **Scroll sync**: uses `EditorView.scrollSnapshot()` or manually tracks the topmost visible line via `view.visibleRanges`.
+- **Ciphertext guard**: a sync effect checks the incoming `value` prop; if it starts with `VAULTNOTE_ENCRYPTED:1`, it does not set the editor content (prevents raw ciphertext from appearing in the editing surface).
 
 ### Editor/MarkdownPreview.tsx
 
@@ -659,6 +762,7 @@ Orchestrates:
 - Scroll sync: `syncSource` ref (`'editor' | 'preview' | null`) with a 150 ms debounce prevents ping-pong feedback loops
 - Click-to-edit: `onLineClick(lineNum)` → `editorRef.current.scrollToLine(lineNum)`
 - Status bar: word count (from `markdown.wordCount`), dirty state, panel toggles
+- **Ciphertext sync guard**: a `useEffect` on the active tab's content checks `isEncryptedContent(content)` — if true, does not propagate the value to the editor (second line of defence after `loadFile` sanitisation)
 
 **Canvas branch**: if `activeTab?.path.endsWith('.canvas')`, renders `<Canvas>` instead of the split editor/preview.
 
@@ -879,12 +983,27 @@ Semantic links have a longer rest distance (120 vs 70 px) to visually separate t
 
 | Data | Encrypted | Method |
 |---|---|---|
-| `.md` files | Never | Plain text on disk |
+| `.md` files (unlocked dirs) | Never | Plain text on disk |
+| `.md` files (locked dirs) | Always | AES-256-GCM, single-archive format (`.vaultnote-vault`) |
 | Embedding index | Optional | AES-GCM-256 via Vault Intelligence Lock |
 | Vault lock verification hash | N/A | PBKDF2 hash (not reversible) |
 | Directory lock verification hash | N/A | PBKDF2 hash |
 | Highlight sidecars | Never | Plain JSON |
 | UUID registry | Never | Plain JSON |
+
+### Single-archive encryption model
+
+When a directory is locked, all `.md` files are packed into a single JSON manifest and encrypted as one blob. The on-disk layout of a locked directory is:
+
+```
+locked-dir/
+  .vaultnote-lock.json    ← PBKDF2 salt + key hash (public metadata)
+  .vaultnote-vault        ← AES-256-GCM ciphertext of the manifest
+```
+
+No file names, file count, or directory structure are visible to an observer without the password. The manifest format uses relative paths as keys, so the archive is self-contained.
+
+On unlock, the archive is decrypted **entirely in memory**. The resulting `{ absPath → content }` map is stored in `lockStore.virtualContents`. All subsequent reads and writes for that directory go through this map — the real filesystem is never touched for the content of locked files within a session. On save, the entire virtual contents map for the directory is re-serialised, re-encrypted, and written back atomically.
 
 ### Key derivation
 
@@ -898,16 +1017,31 @@ password + random_salt (32 bytes)
 
 For verification (lock files): the derived key is exported as raw bytes and SHA-256 hashed. The hash is stored. To verify: re-derive key, export, hash, compare — the original password is never stored.
 
-For encryption (embedding index): derive key → AES-GCM encrypt with a fresh 12-byte IV. Ciphertext is base64-encoded in the JSON blob.
+For encryption (embedding index, directory vault): derive key → AES-GCM encrypt with a fresh 12-byte IV. Ciphertext is base64-encoded in the JSON blob (embedding index) or written as a raw encrypted string (vault archive).
+
+### What `.vaultnote-lock.json` exposes
+
+- **`salt`**: a random 32-byte value, public by design. It prevents rainbow-table precomputation — knowing the salt is not useful without the password.
+- **`hash`**: SHA-256 of the PBKDF2-derived key. Functionally equivalent to a bcrypt or Argon2 stored hash. It cannot be reversed to recover the password or the encryption key.
+
+The only viable attack is offline brute-force: compute `PBKDF2(candidate, salt, 200_000)`, hash it, compare. At 200,000 iterations per attempt, this is expensive. For strong passwords, it is computationally infeasible.
 
 ### Password storage
 
-Passwords exist **only in JS heap memory** (`vaultPasswordStore.password: string | null`). They are never:
+Passwords exist **only in JS heap memory** (`vaultPasswordStore.password` for the intel lock; `lockStore.sessionPasswords` map for directory locks). They are never:
 - Written to disk
 - Sent over any network
 - Stored in `localStorage`
 
-The session ends when the app closes.
+The session ends when the app closes, clearing all passwords and the virtual FS.
+
+### Ciphertext guard (defence-in-depth)
+
+An old bug caused `loadFile` to cache raw ciphertext into `tabStore.savedContent` (persisted in localStorage). Three guards now prevent any ciphertext from appearing in the UI or being persisted:
+
+1. **`App.tsx` startup sanitiser**: runs before first render, evicts any entry from `tabStore.savedContent` and `editorStore.contents` whose value matches `isEncryptedContent()`.
+2. **`Editor/index.tsx` sync guard**: rejects a `value` prop that starts with the `VAULTNOTE_ENCRYPTED:1` prefix before it reaches CodeMirror.
+3. **`editorStore.loadFile` sanitiser**: if a disk read returns a ciphertext string (legacy file format), it decrypts before caching — the plaintext (or an error) is what ends up in `contents`, never the ciphertext.
 
 ---
 
@@ -950,10 +1084,12 @@ The `addYouTubeMarkers` plugin detects `<p>` nodes containing exactly one `<a>` 
 | Embedding index | Disk (vault root) | `.vaultnote-embeddings.json` |
 | UUID registry | Disk (vault root) | `.vaultnote-registry.json` |
 | Vault intel lock | Disk (vault root) | `.vaultnote-intel.lock` |
-| Directory lock | Disk (each locked dir) | `.vaultnote-lock.json` |
+| Directory lock descriptor | Disk (each locked dir) | `.vaultnote-lock.json` |
+| Directory encrypted archive | Disk (each locked dir) | `.vaultnote-vault` |
 | Highlights | Disk (per-note sidecar) | `.{basename}.highlights.json` |
 | Notes | Disk (vault, user dirs) | `*.md` |
 | Canvas files | Disk | `*.canvas` |
+| Virtual FS (locked dir contents) | JS heap only (lockStore) | — (never persisted) |
 
 ### Atomic writes
 
@@ -961,7 +1097,7 @@ The `addYouTubeMarkers` plugin detects `<p>` nodes containing exactly one `<a>` 
 1. Write content to `{path}.tmp`
 2. `fs::rename({path}.tmp, path)` (atomic on same filesystem)
 
-This prevents partial files if the app crashes mid-write.
+This prevents partial files if the app crashes mid-write. The vault archive (`.vaultnote-vault`) is rewritten via the same atomic path, so a crash during re-encryption cannot corrupt the archive — the previous version remains until the rename succeeds.
 
 ### Browser cache (model)
 
@@ -985,12 +1121,23 @@ fileStore.renameNode(oldPath, newName)
 
 fileStore.deleteNode(path, isDirectory)
   │
-  ├─ fs.removePath(path, recursive)            [Rust]
-  ├─ refreshNode(parentDir)                    [file tree]
+  ├─ [if virtual node] lockStore.removeVirtualContent(path)
+  │   → re-encrypt archive to disk (saveVaultArchive)
+  │   → skip fs.removePath (no disk file exists)
+  ├─ [if real node] fs.removePath(path, recursive)   [Rust]
+  ├─ refreshNode(parentDir)                    [file tree — or virtual rebuild]
   ├─ tabStore.closeTabByPath(path)             [close tab if open]
   ├─ editorStore.removeContent(path)           [evict from cache]
   ├─ embeddingStore.removeIndexEntry(path)     [embedding + autoPersist]
   └─ noteRegistryStore.deregister(path)        [UUID registry + disk save]
+
+fileStore.createFile(parentPath, name)
+  │
+  ├─ [if virtual parent] lockStore.updateVirtualContent(absPath, '')
+  │   → re-encrypt archive to disk (saveVaultArchive)
+  │   → skip fs.writeTextFile
+  ├─ [if real parent] fs.writeTextFile(absPath, '')   [Rust]
+  └─ refreshNode(parentPath)                   [file tree — or virtual rebuild]
 
 fileStore.moveNode(oldPath, targetDir)
   │
@@ -999,6 +1146,8 @@ fileStore.moveNode(oldPath, targetDir)
   ├─ refreshNode(targetDir)                    [new parent tree update]
   └─ [same cascade as renameNode]
 ```
+
+**Virtual node handling summary**: for any CRUD operation where the target path has a session-unlocked ancestor, `fileStore` bypasses disk operations and instead mutates `lockStore.virtualContents`, then calls `saveVaultArchive` to re-encrypt the archive. The `refreshNode` call for virtual directories rebuilds children from `virtualContents` via `buildVirtualChildren` rather than reading the filesystem.
 
 The cascades use `.getState()` to avoid stale closures:
 ```typescript
@@ -1048,9 +1197,14 @@ This relies on Zustand's persist middleware writing to `localStorage['vaultnote-
 ```
 User clicks file in sidebar
   → handleFileClick(path)
+  → lockStore.isLocked(path)?
+      YES → show LockModal → on success: openVaultArchive(dirPath, password)
+            → lockStore.setVirtualContents(decryptedMap)
   → editorStore.loadFile(path)
-      → check contents Map (cache hit? return immediately)
+      → check lockStore.virtualContents (virtual FS hit? return plaintext immediately)
+      → virtual miss: check contents Map (cache hit? return immediately)
       → cache miss: fs.readTextFile(path)
+          → if isEncryptedContent(result): decryptContent(result, sessionPw) [legacy path]
       → tabStore.updateSavedContent(tab.id, content)
   → tabStore.openTab(path, content)
       → existing tab? activate it
@@ -1059,6 +1213,7 @@ User clicks file in sidebar
   → graphStore.indexFile(path, content)     (update wiki-links)
   → highlightStore.loadHighlights(path)     (load sidecar)
   → [CodeMirrorEditor receives new value prop]
+      → ciphertext guard: reject if isEncryptedContent(value)
   → [MarkdownPreview renders new content]
 ```
 
@@ -1067,7 +1222,16 @@ User clicks file in sidebar
 ```
 Auto-save timer fires (or Ctrl+S)
   → editorStore.saveFile(path, content)
-  → fs.writeTextFile(path, content)         [atomic Rust write]
+  → findSessionUnlockedAncestor(path)?
+      YES (virtual path) →
+        lockStore.updateVirtualContent(path, content)
+        saveVaultArchive(dirPath, sessionPw, allVirtualContentsForDir)
+        [atomic Rust write of .vaultnote-vault — no plaintext on disk]
+      NO, ancestor in lockedPaths (legacy per-file) →
+        encryptContent(content, sessionPw)
+        fs.writeTextFile(path, ciphertext)
+      NO (normal path) →
+        fs.writeTextFile(path, content)         [atomic Rust write]
   → contents.set(path, content)             [update cache]
   → tabStore.updateSavedContent(tab.id, content)
   → tabStore.markDirty(tab.id, false)
@@ -1134,6 +1298,15 @@ User types in search modal
 **Decision**: `t = Math.log1p(score × (e−1))` instead of linear.
 **Rationale**: `all-MiniLM-L6-v2` cosine scores for related notes cluster between 0.3–0.65. A linear 0–1 scale makes all edges appear orange. The log curve maps score 0.5 → hue 74° (yellow-green) and score 0.38 → hue 60° (yellow midpoint), giving perceptually useful distribution across the realistic score range.
 
+### 11. Single-archive vault format over per-file encryption
+**Decision**: All `.md` files in a locked directory are packed into one encrypted archive (`.vaultnote-vault`) rather than encrypting each file individually in-place.
+**Rationale**:
+- **Metadata leakage**: per-file encryption keeps filenames and directory structure visible on disk. The archive format reveals nothing — no filenames, no count, no structure.
+- **Simplicity of virtual FS**: a single archive decrypts to a flat map of paths → content in one operation. There is no need to track which individual files are encrypted and decrypt them lazily.
+- **Atomic consistency**: re-encrypting one archive on save is a single atomic disk write. Per-file would require writing N files, any of which could fail mid-way, leaving the directory in a mixed state.
+- **Migration**: old per-file encrypted directories are automatically migrated to the archive format on first unlock via `migrateToArchiveIfNeeded`, with no user action required.
+- **Tradeoff**: the entire archive must be re-encrypted on every save, even for a small edit. For directories with thousands of large notes, this could be slow. At typical note sizes (1–50 KB each) and counts (< 200 per directory), it is imperceptible.
+
 ---
 
 ## 19. Adding a New Feature — Checklist
@@ -1183,3 +1356,4 @@ If your feature tracks per-file state (like embeddings, highlights, registry):
 | **Conflict resolution** | No CRDT; last-write-wins | External editor changes are auto-reloaded only if tab is clean |
 | **Large vaults** | D3 graph becomes cluttered | Virtualized graph or clustering for > 200 nodes |
 | **Spell check** | Browser native only | Could integrate a WASM spell-check library |
+| **Large locked dirs** | Full archive re-encrypt on every save | Acceptable for typical note sizes; for very large dirs, consider chunked archives |
